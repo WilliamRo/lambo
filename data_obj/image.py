@@ -2,28 +2,37 @@ import cv2
 import numpy as np
 import os
 
+from lambo.abstract.noear import Nomear
+from lambo.gui.pyplt import imshow
 
-class DigitalImage(object):
 
-  def __init__(self, img):
+class DigitalImage(Nomear):
+
+  def __init__(self, img: np.ndarray, **kwargs):
     self.img = img
-    self._F = None
-    self._Sc = None
+    self._init_kwargs = kwargs
 
   # region: Properties
 
   @property
-  def F(self):
-    if self._F is not None: return self._F
-    self._F = np.fft.fft2(self.img)
-    return self._F
+  def F(self) -> np.ndarray:
+    return self.get_from_pocket(
+      'fft2(x)', initializer=lambda: np.fft.fft2(self.img))
 
   @property
-  def Sc(self):
+  def Fc(self) -> np.ndarray:
+    return self.get_from_pocket(
+      'fftshift(fft2(x))', initializer=lambda: np.fft.fftshift(self.F))
+
+  @property
+  def Sc(self) -> np.ndarray:
     """Centralized spectrum"""
-    if self._Sc is not None: return self._Sc
-    self._Sc = np.abs(np.fft.fftshift(self.F))
-    return self._Sc
+    return self.get_from_pocket(
+      'abs(fftshift(fft2(x)))', initializer=lambda: np.abs(self.Fc))
+
+  @property
+  def size(self):
+    return self.img.shape
 
   # endregion: Properties
 
@@ -37,31 +46,23 @@ class DigitalImage(object):
     """Show this image
     :param show_fc: whether to show Fourier coefficients
     """
-    from lambo.gui.pyplt import imshow
     imgs = [self.img]
     if show_fc: imgs.append(np.log(self.Sc + 1))
     imshow(*imgs, **kwargs)
 
   # endregion: Public Methods
 
-  # region: Static Methods
+  # region: Class Methods
 
-  @staticmethod
-  def imread(path):
+  @classmethod
+  def imread(cls, path, return_array=False, **kwargs):
     # TODO: different image types should be tested
     if not os.path.exists(path):
       raise FileExistsError("!! File {} does not exist.")
     img = cv2.imread(path, 0)
-    return DigitalImage(img)
+    if return_array: return img
+    return cls(img, **kwargs)
 
-  # endregion: Static Methods
+  # endregion: Class Methods
 
-
-if __name__ == '__main__':
-  import os
-  path = r'../../01-COME/data/3t3/sample/2.tif'
-  if os.path.exists(path):
-    di = DigitalImage.imread(path)
-    di.imshow(True)
-  else: print("!! Can not find file '{}'".format(path))
 
