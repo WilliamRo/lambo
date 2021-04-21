@@ -32,6 +32,10 @@ class Interferogram(DigitalImage):
   # region: Properties
 
   @property
+  def log_Sc(self) -> np.ndarray:
+    return np.log(self.Sc + 1)
+
+  @property
   def bg_array(self) -> np.ndarray:
     return self._background.img
 
@@ -89,24 +93,18 @@ class Interferogram(DigitalImage):
       'unwrapped_phase', initializer=lambda: unwrap_phase(self.delta_angle))
 
   @property
+  def bg_plane_info(self) -> np.ndarray:
+    _fit_plane = lambda: fit_plane(self.unwrapped_phase.copy())
+    return self.get_from_pocket('bg_plane_info', initializer=_fit_plane)
+
+  @property
   def flattened_phase(self) -> np.ndarray:
     def _flattened_phase():
       phase = self.unwrapped_phase.copy()
-      if callable(fit_plane):
-        flattened = phase - fit_plane(phase, radius=0.01)
-        flattened = np.maximum(flattened, 0)
-        return flattened
-      # TODO: consider using a better algorithm
-      P, Q = 30, 100
-      H, W = phase.shape
-      x_conf = np.mean(phase[:, -P] - phase[:, P])
-      y_conf = np.mean(phase[-P, :] - phase[P, :])
-      x_conf_vec = np.linspace(x_conf, 0, W)
-      y_conf_vec = np.linspace(y_conf, 0, H).reshape(H, 1)
-      phase += x_conf_vec + y_conf_vec
-      phase -= np.mean(phase[0:Q, 0:Q])  # mean or median
-      phase = np.maximum(phase, 0)
-      return phase
+      bg_plane, _ = self.bg_plane_info
+      flattened = phase - bg_plane
+      flattened = np.maximum(flattened, 0)
+      return flattened
     return self.get_from_pocket('flattened_phase', initializer=_flattened_phase)
 
   @property
@@ -120,6 +118,12 @@ class Interferogram(DigitalImage):
   # endregion: Properties
 
   # region: Public Methods
+
+  def rotate(self, k):
+    img = np.rot90(self.img, k)
+    bg = np.rot90(self.bg_array, k)
+    ig = Interferogram(img, bg, self.radius)
+    return ig
 
   def soft_mask(self, alpha=0.1, mask_min=0.1):
     x = self.flattened_phase
@@ -143,41 +147,112 @@ class Interferogram(DigitalImage):
     bg = super().imread(bg_path, return_array=True) if bg_path else None
     return Interferogram(img, bg, radius)
 
-  def imshow(self, show_img=True, show_fc=False, circle=False, extracted=False,
-             show_angle=False, show_unwrapped=False, show_flattened=False,
-             show_sample_mask=False, **kwargs):
+  def imshow(self, interferogram=True, spectrum=False, extracted=False,
+             angle=False, unwrapped=False, flattened=False, sample_mask=False,
+             **kwargs):
     """Show this image
     :param show_fc: whether to show Fourier coefficients
     """
-    imgs = []
+    imgs, titles = [], []
+    def append_img(img, title):
+      imgs.append(img)
+      titles.append(title)
+
     # (0) interferogram
-    if show_img: imgs.append(self.img)
+    if interferogram: append_img(self.img, 'Interferogram')
     # (1) spectrum
-    if show_fc:
+    if spectrum:
       im = np.log(self.Sc + 1)
-      if circle: im = (im, lambda: plt.gca().add_artist(plt.Circle(
+      im = (im, lambda: plt.gca().add_artist(plt.Circle(
         list(reversed(self.peak_index)), self.radius, color='r', fill=False)))
       imgs.append(im)
+      titles.append('Centered Spectrum (log)')
     # (2) extracted image
-    if extracted:
-      imgs.append(np.abs(self.extracted_image))
+    if extracted: append_img(np.abs(self.extracted_image), 'Extracted')
     # (3) show retrieved phase
-    if show_angle: imgs.append(self.delta_angle)
+    if angle: append_img(self.delta_angle, 'Angle')
     # (4) Unwrapped phase image
-    if show_unwrapped: imgs.append(self.unwrapped_phase)
+    if unwrapped: append_img(self.unwrapped_phase, 'Unwrapped')
     # (5) Balanced phase image
-    if show_flattened: imgs.append(self.flattened_phase)
+    if flattened: append_img(self.flattened_phase, 'Flattened')
     # (6) Sample mask
-    if show_sample_mask: imgs.append(self.soft_mask())
+    if sample_mask: append_img(self.soft_mask(), 'Sample Mask')
 
     # Show image using lambo.imshow
-    imshow(*imgs, **kwargs)
+    imshow(*imgs, titles=titles, **kwargs)
 
-  def phase_histogram(self):
-    array = np.ravel(self.flattened_phase)
-    print('Range: [{:.2f}, {:.2f}]'.format(np.min(array), np.max(array)))
-    plt.hist(array)
+  def phase_histogram(self, unwrapped=True, flattened=True):
+    buffer = []
+    def _plot_hist(array: np.ndarray, title: str, total: int):
+      if total > 1: plt.subplot(1, total, len(buffer) + 1)
+      plt.hist(np.ravel(array))
+      plt.title('{}, Range: [{:.2f}, {:.2f}]'.format(
+        title, np.min(array), np.max(array)))
+      buffer.append(title)
+
+    # Plot hist
+    total = unwrapped + flattened
+    size = 5
+    plt.figure(figsize=(size * total, size))
+    if unwrapped: _plot_hist(self.unwrapped_phase, 'Unwrapped Phase', total)
+    if flattened: _plot_hist(self.flattened_phase, 'Flattened Phase', total)
+
+    # Finalize
+    plt.tight_layout()
     bind_quick_close()
+    plt.show()
+
+  def flatten_analysis(self, plot3d=False, show_plane=True):
+    from matplotlib.gridspec import GridSpec
+    from matplotlib import cm
+
+    def _plot_img(ax: plt.Axes, array: np.ndarray, title=None):
+      if plot3d:
+        H, W = array.shape
+        X, Y = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+        ax.plot_surface(X, Y, array, cmap=cm.coolwarm)
+      else: ax.imshow(array)
+      if title: ax.set_title(title)
+
+    def _plot_hist(array: np.ndarray, title: str):
+      plt.hist(np.ravel(array), bins=20, density=True)
+      plt.title('{}, Range: [{:.2f}, {:.2f}]'.format(
+        title, np.min(array), np.max(array)))
+
+    # Plot
+    fig = plt.figure(figsize=(12, 8))
+    spec = GridSpec(nrows=2, ncols=2, height_ratios=[3, 1])
+
+    kwargs = {}
+    left_array = self.unwrapped_phase
+    if plot3d: kwargs['projection'] = '3d'
+    ax = fig.add_subplot(spec[0], **kwargs)
+    assert isinstance(ax, plt.Axes)
+    _plot_img(ax, left_array, 'Unwrapped Phase')
+    fig.add_subplot(spec[2])
+    _plot_hist(left_array, 'Unwrapped Phase')
+
+    # Plot plane if required
+    if plot3d and show_plane:
+      plane, r = self.bg_plane_info
+      H, W = plane.shape
+      X, Y = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+      ax.plot_wireframe(X, Y, plane, color='green')
+      ax.set_title('Unwrapped Phase, r = {:.4f}'.format(r))
+
+    # Plot right part
+    z_lim = ax.get_zlim()
+
+    right_array = self.flattened_phase
+    ax = fig.add_subplot(spec[1], **kwargs)
+    _plot_img(ax, right_array, 'Flattened Phase')
+    fig.add_subplot(spec[3])
+    _plot_hist(right_array, 'Flattened Phase')
+    ax.set_zlim(z_lim)
+
+    # Finalize
+    bind_quick_close()
+    plt.tight_layout()
     plt.show()
 
   # endregion: Public Methods
@@ -221,6 +296,18 @@ class Interferogram(DigitalImage):
       'Ground Truth', 'Assembled {0}x{0}'.format(N),
       'Difference, MSE = {0:.3f}'.format(mse)], max_cols=max_cols)
 
+  def analyze_rotation(self, key='flattened_phase'):
+    # Plot non-rotated image on top left
+    images, titles = [getattr(self, key)], ['0 Degree']
+    # Rotate, retrieve, and plot
+    for k in range(1, 4):
+      ig = self.rotate(k)
+      images.append(getattr(ig, key))
+      titles.append('{} Degree'.format(90 * k))
+
+    # Show images
+    imshow(*images, titles=titles, max_cols=2)
+
   # endregion: Analysis
 
 
@@ -228,15 +315,15 @@ if __name__ == '__main__':
   import os
   sample = '3t3'
   # sample = 'rbc'
-  id = 2
+  id = 1
   raw_path = r'../../01-PR/data/{}/sample/{}.tif'.format(sample, id)
   bg_path = r'../../01-PR/data/{}/bg/{}.tif'.format(sample, id)
   if os.path.exists(raw_path):
     assert os.path.exists(bg_path)
     di = Interferogram.imread(raw_path, bg_path, radius=70)
-    # di.imshow(show_unwrapped=True)
-    # di.phase_histogram()
-    di.analyze_windows(4, ignore_gap=0)
+    di.imshow(unwrapped=True)
+    di.phase_histogram()
+    # di.analyze_windows(4, ignore_gap=0)
   else: print("!! Can not find file '{}'".format(raw_path))
 
 

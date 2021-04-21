@@ -10,7 +10,7 @@ def random_window(window_shape, full_shape, sigma=None):
   assert sigma is None
   h, w = window_shape
   H, W = full_shape
-  return [np.random.randint(0, high) for high in (H - h, W - w)]
+  return [np.random.randint(0, high + 1) for high in (H - h, W - w)]
 
 
 if __name__ == '__main__':
