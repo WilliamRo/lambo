@@ -6,7 +6,7 @@ from typing import Optional
 from lambo.data_obj.image import DigitalImage
 from lambo.gui.pyplt import imshow
 from lambo.gui.pyplt.events import bind_quick_close
-from lambo.maths.geometry.plane import fit_plane
+from lambo.maths.geometry.plane import fit_plane_adaptively
 
 from skimage.restoration import unwrap_phase
 
@@ -19,6 +19,7 @@ class Interferogram(DigitalImage):
                **kwargs):
     # Call parent's initializer
     super(Interferogram, self).__init__(img, **kwargs)
+
     # Attributes
     self.radius = roma.check_type(radius, int, nullable=True)
     self.lambda_0 = roma.check_type(lambda_0, float, nullable=True)
@@ -94,14 +95,33 @@ class Interferogram(DigitalImage):
 
   @property
   def bg_plane_info(self) -> np.ndarray:
-    _fit_plane = lambda: fit_plane(self.unwrapped_phase.copy())
+    """(bg, p, r)"""
+    _fit_plane = lambda: fit_plane_adaptively(
+      self.unwrapped_phase.copy(), **self.flatten_configs)
     return self.get_from_pocket('bg_plane_info', initializer=_fit_plane)
+
+  @property
+  def bg_plane(self) -> np.ndarray:
+    return self.bg_plane_info[0]
+
+  @property
+  def bg_flatness(self):
+    return self.bg_plane_info[2]
+
+  @property
+  def bg_slope(self):
+    a, b, c = self.bg_plane_info[1]
+    return np.sqrt(a**2 + b**2) * 1000
+
+  @property
+  def flatten_configs(self) -> dict:
+    return self.get_from_pocket('flatten_configs', default={})
 
   @property
   def flattened_phase(self) -> np.ndarray:
     def _flattened_phase():
       phase = self.unwrapped_phase.copy()
-      bg_plane, _ = self.bg_plane_info
+      bg_plane = self.bg_plane_info[0]
       flattened = phase - bg_plane
       flattened = np.maximum(flattened, 0)
       return flattened
@@ -181,6 +201,13 @@ class Interferogram(DigitalImage):
     # Show image using lambo.imshow
     imshow(*imgs, titles=titles, **kwargs)
 
+  def set_flatten_configs(self, **configs):
+    self.put_into_pocket('flatten_configs', configs)
+
+  # endregion: Public Methods
+
+  # region: Analysis
+
   def phase_histogram(self, unwrapped=True, flattened=True):
     buffer = []
     def _plot_hist(array: np.ndarray, title: str, total: int):
@@ -202,16 +229,18 @@ class Interferogram(DigitalImage):
     bind_quick_close()
     plt.show()
 
-  def flatten_analysis(self, plot3d=False, show_plane=True):
+  def flatten_analysis(self, plot3d_in_2=False, show_plane=True, **configs):
     from matplotlib.gridspec import GridSpec
     from matplotlib import cm
 
-    def _plot_img(ax: plt.Axes, array: np.ndarray, title=None):
+    def _plot_img(ax: plt.Axes, array: np.ndarray, title=None, plot3d=False):
       if plot3d:
         H, W = array.shape
         X, Y = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
         ax.plot_surface(X, Y, array, cmap=cm.coolwarm)
-      else: ax.imshow(array)
+      else:
+        ax.imshow(array)
+        ax.set_axis_off()
       if title: ax.set_title(title)
 
     def _plot_hist(array: np.ndarray, title: str):
@@ -219,45 +248,43 @@ class Interferogram(DigitalImage):
       plt.title('{}, Range: [{:.2f}, {:.2f}]'.format(
         title, np.min(array), np.max(array)))
 
+    self.set_flatten_configs(**configs)
+
     # Plot
     fig = plt.figure(figsize=(12, 8))
     spec = GridSpec(nrows=2, ncols=2, height_ratios=[3, 1])
 
-    kwargs = {}
     left_array = self.unwrapped_phase
-    if plot3d: kwargs['projection'] = '3d'
-    ax = fig.add_subplot(spec[0], **kwargs)
+    ax = fig.add_subplot(spec[0], projection='3d')
     assert isinstance(ax, plt.Axes)
-    _plot_img(ax, left_array, 'Unwrapped Phase')
+    _plot_img(ax, left_array, 'Unwrapped Phase', plot3d=True)
     fig.add_subplot(spec[2])
     _plot_hist(left_array, 'Unwrapped Phase')
 
     # Plot plane if required
-    if plot3d and show_plane:
-      plane, r = self.bg_plane_info
-      H, W = plane.shape
+    if show_plane:
+      H, W = self.bg_plane.shape
       X, Y = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-      ax.plot_wireframe(X, Y, plane, color='green')
-      ax.set_title('Unwrapped Phase, r = {:.4f}'.format(r))
+      ax.plot_wireframe(X, Y, self.bg_plane, color='green')
+      title = 'Unwrapped Phase, r = {:.1f}'.format(self.bg_flatness)
+      title += ', s = {:.1f}'.format(self.bg_slope)
+      title += ', b = {:.1f}'.format(self.bg_plane_info[-1])
+      ax.set_title(title)
 
     # Plot right part
     z_lim = ax.get_zlim()
 
     right_array = self.flattened_phase
+    kwargs = {'projection': '3d'}  if plot3d_in_2 else {}
     ax = fig.add_subplot(spec[1], **kwargs)
-    _plot_img(ax, right_array, 'Flattened Phase')
+    _plot_img(ax, right_array, 'Flattened Phase', plot3d=plot3d_in_2)
     fig.add_subplot(spec[3])
     _plot_hist(right_array, 'Flattened Phase')
-    ax.set_zlim(z_lim)
 
     # Finalize
     bind_quick_close()
     plt.tight_layout()
     plt.show()
-
-  # endregion: Public Methods
-
-  # region: Analysis
 
   def analyze_windows(self, N, ignore_gap=0, max_cols=3, show_grid=0):
     """Divide img evenly into N by N parts and do phase retrieval individually.
