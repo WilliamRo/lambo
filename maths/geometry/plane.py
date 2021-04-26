@@ -5,8 +5,9 @@ def analyze_bg_extraction(x: np.ndarray, **kwargs):
   from matplotlib.gridspec import GridSpec
   from matplotlib import cm
   from typing import Optional
-  import matplotlib.pyplot as plt
   from lambo.gui.pyplt.events import bind_quick_close
+
+  import matplotlib.pyplot as plt
 
   # Define some methods for plot
   def _plot_surface(
