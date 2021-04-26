@@ -1,8 +1,9 @@
 from lambo.gui.vinci.board import Board
 from lambo.gui.vinci.events import StateMachine
+from lambo.gui.vinci.mind import Mind
 
 
-class DaVinci(Board):
+class DaVinci(Board, Mind):
 
   def __init__(self, title=None, height=5, width=5):
     # Call parent's constructor
@@ -13,6 +14,7 @@ class DaVinci(Board):
 
     # Finalize the initiation
     self._register_events_for_cursors()
+    self._activate_mind()
 
   # region: Properties
 
@@ -43,9 +45,9 @@ class DaVinci(Board):
     self.state_machine.register_key_event('h', layer_backward)
     self.state_machine.register_key_event('up', layer_backward)
 
-  def _register_admin(self):
+  def _activate_mind(self):
     if self.backend_is_TkAgg:
-      pass
+      self.state_machine.register_key_event(':', self.sense)
 
   # endregion: Private Methods
 

@@ -1,0 +1,74 @@
+import numpy as np
+import re
+import inspect
+
+
+class Mind(object):
+
+  def sense(self):
+    cmd = self.ask()
+    if cmd is None: return
+    cmd_string, func_key, args, kwargs = cmd
+
+    # Get method
+    func = getattr(self, func_key, None)
+    if not callable(func):
+      print(' ! command `{}` not found.'.format(func_key))
+      return
+
+    # Try to execute func
+    params_dict = inspect.signature(func).parameters
+    params_values = list(params_dict.values())
+    has_annotation = lambda p: p.annotation is not inspect._empty
+    try:
+      # Try to convert args type
+      for i in range(len(args)):
+        p = params_values[i]
+        if has_annotation(p): args[i] = p.annotation(args[i])
+      # Try to convert kwargs type
+      for k, v in kwargs.items():
+        p = params_dict[k]
+        if has_annotation(p): kwargs[k] = p.annotation(v)
+
+      # Execute
+      func(*args, **kwargs)
+    except Exception as e:
+      print(' ! Failed to execute command `{}`'.format(cmd_string))
+      print('.. Error Message:')
+      print('- ' * 39)
+      print(e)
+      print('- ' * 39)
+
+
+  @staticmethod
+  def ask():
+    from lambo.gui.tkutils.simple_dialogs import ask_string
+    # Ask for command
+    s = ask_string()
+    if s is None: return None
+
+    assert isinstance(s, str)
+    parts = s.split(' ')
+    assert len(parts) > 0
+
+    # Parse string
+    func_key, args, kwargs, flag = parts.pop(0), [], {}, True
+    for p in parts:
+      if '=' in p:
+        _p = p.split('=')
+        if len(_p) != 2:
+          flag = False
+          break
+        kwargs[_p[0]] = _p[1]
+      else: args.append(p)
+
+    # Check and return
+    if not flag:
+      print(' ! `{}` is not an appropriate command'.format(s))
+      return None
+    return s, func_key, args, kwargs
+
+
+if __name__ == '__main__':
+  m = Mind()
+  m.sense()

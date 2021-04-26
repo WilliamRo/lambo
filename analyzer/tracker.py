@@ -1,5 +1,4 @@
 from lambo.abstract.noear import Nomear
-from lambo.gui.pyplt.events import bind_quick_close
 from lambo.misc.local import walk
 from pandas import DataFrame, Series
 from roma import console

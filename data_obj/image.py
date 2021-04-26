@@ -65,4 +65,12 @@ class DigitalImage(Nomear):
 
   # endregion: Class Methods
 
+  # region: Image Transformation
+
+  @staticmethod
+  def rotate_image(x: np.ndarray, degree):
+    return x
+
+  # endregion: Image Transformation
+
 

@@ -25,6 +25,9 @@ class StateMachine(object):
       canvas = board.canvas
       self.board = board
 
+    # Disconnect default commands
+    canvas.mpl_disconnect(canvas.manager.key_press_handler_id)
+
     # Bind event to canvas
     canvas.mpl_connect(
       'key_press_event', lambda e: self._on_key_press(e))

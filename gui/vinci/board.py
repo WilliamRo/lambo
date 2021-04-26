@@ -17,7 +17,7 @@ class Board(Nomear):
   """
 
   class Configs:
-    show_after_ms = 10
+    show_after_ms = 1
 
   class Keys:
     figure = 'FIGURE'
@@ -172,10 +172,8 @@ class Board(Nomear):
   def move_to_center(self):
     """Should be called after window has been shown"""
     if self.backend_is_TkAgg:
-      h, w = self.window.winfo_height(), self.window.winfo_width()
-      H, W = self.window.winfo_screenheight(), self.window.winfo_screenwidth()
-      x, y = (W - w) // 2, (H - h) // 2
-      self.move_to(x, y)
+      from lambo.gui.tkutils.misc import centerize_window
+      centerize_window(self.window)
     else:
       pass
 
