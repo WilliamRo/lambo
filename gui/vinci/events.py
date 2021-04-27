@@ -50,7 +50,7 @@ class StateMachine(object):
       # Call method with proper arguments
       kwargs = self._get_kwargs_for_event(method)
       method(**kwargs)
-    elif key in ('escape', 'q'):
+    elif key in ('escape_', 'q'):
       plt.close()
     else: print('>> key "{}" pressed'.format(key))
 

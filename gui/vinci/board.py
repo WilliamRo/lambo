@@ -209,6 +209,20 @@ class Board(Nomear):
 
   # endregion: Plotter Library
 
+  # region: Build-in Commands
+
+  def print_object_info(self):
+    if not self.objects:
+      print(' ! not object found')
+      return
+    data = self.objects[self.object_cursor]
+    assert isinstance(data, np.ndarray)
+    print('Information of object[{}]:'.format(self.object_cursor + 1))
+    print('.. Shape = {}'.format(data.shape))
+    print('.. Range = [{:.3f}, {:.3f}]'.format(np.min(data), np.max(data)))
+
+  # endregion: Build-in Commands
+
 
 if __name__ == '__main__':
   b = Board()

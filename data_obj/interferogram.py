@@ -139,10 +139,15 @@ class Interferogram(DigitalImage):
 
   # region: Public Methods
 
-  def rotate(self, k):
-    img = np.rot90(self.img, k)
-    bg = np.rot90(self.bg_array, k)
-    ig = Interferogram(img, bg, self.radius)
+  def rotate(self, angle: float):
+    img = self.rotate_image(self.img, angle)
+    img = self.get_downtown_area(img)
+    bg = self.rotate_image(self.bg_array, angle)
+    bg = self.get_downtown_area(bg)
+
+    radius = int(self.radius / min(self.size) * img.shape[0])
+    # radius = self.radius
+    ig = Interferogram(img, bg, radius)
     return ig
 
   def soft_mask(self, alpha=0.1, mask_min=0.1):
@@ -339,19 +344,16 @@ class Interferogram(DigitalImage):
 
 
 if __name__ == '__main__':
-  import os
-  sample = '3t3'
-  # sample = 'rbc'
-  id = 1
-  raw_path = r'../../01-PR/data/{}/sample/{}.tif'.format(sample, id)
-  bg_path = r'../../01-PR/data/{}/bg/{}.tif'.format(sample, id)
-  if os.path.exists(raw_path):
-    assert os.path.exists(bg_path)
-    di = Interferogram.imread(raw_path, bg_path, radius=70)
-    di.imshow(unwrapped=True)
-    di.phase_histogram()
-    # di.analyze_windows(4, ignore_gap=0)
-  else: print("!! Can not find file '{}'".format(raw_path))
+  from pr.pr_agent import PRAgent
+
+  data_dir = r'E:\lambai\01-PR\data'
+
+  trial_id = 2
+  sample_id = 1
+  ig = PRAgent.read_interferogram(data_dir, trial_id, sample_id)
+
+  ig.analyze_windows(4)
+
 
 
 

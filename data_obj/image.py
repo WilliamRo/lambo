@@ -5,6 +5,8 @@ import os
 from lambo.abstract.noear import Nomear
 from lambo.gui.pyplt import imshow
 
+from skimage.transform import rotate
+
 
 class DigitalImage(Nomear):
 
@@ -68,8 +70,20 @@ class DigitalImage(Nomear):
   # region: Image Transformation
 
   @staticmethod
-  def rotate_image(x: np.ndarray, degree):
-    return x
+  def rotate_image(x: np.ndarray, angle: float, resize: bool = False,
+                   mode='constant'):
+    return rotate(x, angle, resize, mode=mode)
+
+  @staticmethod
+  def get_downtown_area(x: np.ndarray):
+    """All pixels in `downtown` area of an rotated image are indigenous"""
+    h, w = x.shape[:2]
+    ci, cj = h // 2, w // 2
+    # radius of the in-circle
+    r = min(ci, cj)
+
+    d = int(np.floor(r / np.sqrt(2)))
+    return x[ci-d:ci+d, cj-d:cj+d]
 
   # endregion: Image Transformation
 

@@ -1,14 +1,24 @@
+from lambo.abstract.noear import Nomear
+
 import numpy as np
 import re
 import inspect
 
 
-class Mind(object):
+class Mind(Nomear):
+
+  @property
+  def command_history(self) -> list:
+    return self.get_from_pocket('COMMAND_HISTORY', initializer=lambda: [])
+
 
   def sense(self):
-    cmd = self.ask()
+    cmd = self.ask(history_buffer=self.command_history)
     if cmd is None: return
     cmd_string, func_key, args, kwargs = cmd
+
+    # Add cmd_string to history buffer anyway
+    self.command_history.append(cmd_string)
 
     # Get method
     func = getattr(self, func_key, None)
@@ -41,10 +51,10 @@ class Mind(object):
 
 
   @staticmethod
-  def ask():
+  def ask(history_buffer=()):
     from lambo.gui.tkutils.simple_dialogs import ask_string
     # Ask for command
-    s = ask_string()
+    s = ask_string(history_buffer=history_buffer)
     if s is None: return None
 
     assert isinstance(s, str)
