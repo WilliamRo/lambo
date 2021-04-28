@@ -211,7 +211,8 @@ class Board(Nomear):
 
   # region: Build-in Commands
 
-  def print_object_info(self):
+  def poi(self):
+    """Print Object Information"""
     if not self.objects:
       print(' ! not object found')
       return

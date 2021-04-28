@@ -75,14 +75,16 @@ class DigitalImage(Nomear):
     return rotate(x, angle, resize, mode=mode)
 
   @staticmethod
-  def get_downtown_area(x: np.ndarray):
+  def get_downtown_area(x: np.ndarray, p2=0):
     """All pixels in `downtown` area of an rotated image are indigenous"""
     h, w = x.shape[:2]
     ci, cj = h // 2, w // 2
     # radius of the in-circle
     r = min(ci, cj)
-
     d = int(np.floor(r / np.sqrt(2)))
+    # Make sure output side-length is integer multiples of (2 ** p2)
+    unit = 2 ** p2
+    d = d // unit * unit
     return x[ci-d:ci+d, cj-d:cj+d]
 
   # endregion: Image Transformation
