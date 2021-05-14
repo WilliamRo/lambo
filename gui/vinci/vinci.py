@@ -5,7 +5,7 @@ from lambo.gui.vinci.mind import Mind
 
 class DaVinci(Board, Mind):
 
-  def __init__(self, title=None, height=5, width=5):
+  def __init__(self, title=None, height=5, width=5, init_as_image_viewer=False):
     # Call parent's constructor
     super(DaVinci, self).__init__(title, height, width)
 
@@ -15,6 +15,8 @@ class DaVinci(Board, Mind):
     # Finalize the initiation
     self._register_events_for_cursors()
     self._activate_mind()
+
+    if init_as_image_viewer: self.add_plotter(self.imshow)
 
   # region: Properties
 

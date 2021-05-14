@@ -57,6 +57,17 @@ class DigitalImage(Nomear):
   # region: Class Methods
 
   @classmethod
+  def get_fourier_basis(cls, fi, fj, L=16, fmt='default'):
+    I, J = np.meshgrid(range(L), range(L), indexing='ij')
+    basis = np.exp(-2*np.pi*1j*(fi*I+ fj*J))
+    if fmt in ('default', 'double_channel'):
+      return np.stack([np.real(basis), np.imag(basis)], axis=-1)
+    elif fmt in ('real', 'r'): return np.real(basis)
+    elif fmt in ('image', 'imag', 'i'): return np.imag(basis)
+    elif fmt in ('complex', 'comp'): return basis
+    else: raise KeyError('Unknown format `{}` for Fourier basis'.format(fmt))
+
+  @classmethod
   def imread(cls, path, return_array=False, **kwargs):
     # TODO: different image types should be tested
     if not os.path.exists(path):

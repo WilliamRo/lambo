@@ -13,7 +13,7 @@ class StateMachine(object):
     # Other attributes
     self._buffer_len = buffer_len
     self.key_buffer = []
-    self.board = None
+    self.board: Optional[Board] = None
 
   # region: Public Methods
 
@@ -52,6 +52,8 @@ class StateMachine(object):
       method(**kwargs)
     elif key in ('escape_', 'q'):
       plt.close()
+    elif key == 'ctrl+enter':
+      self.board.window.state('zoomed')
     else: print('>> key "{}" pressed'.format(key))
 
     # Things should be done inside each branch, such as refresh

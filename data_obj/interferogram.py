@@ -2,16 +2,21 @@ import numpy as np
 import matplotlib.pyplot as plt
 import roma
 
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Tuple
 from lambo.data_obj.image import DigitalImage
 from lambo.gui.pyplt import imshow
 from lambo.gui.pyplt.events import bind_quick_close
+from lambo.gui.vinci.vinci import DaVinci
+from lambo.maths.geometry.misc import rotate_coord
 from lambo.maths.geometry.plane import fit_plane_adaptively
 
 from skimage.restoration import unwrap_phase
 
 
 class Interferogram(DigitalImage):
+
+  class Keys(object):
+    fourier_prior = '_fourier_prior_'
 
   def __init__(self, img, bg=None, radius=None, lambda_0=None, delta_n=None,
                **kwargs):
@@ -31,6 +36,12 @@ class Interferogram(DigitalImage):
   # region: Properties
 
   @property
+  def fourier_prior(self) -> Tuple[float, float]:
+    if not hasattr(self, self.Keys.fourier_prior):
+      self._set_fourier_prior(self.peak_index)
+    return getattr(self, self.Keys.fourier_prior)
+
+  @property
   def peak_mask(self):
     # Initialize mask
     mask = np.ones_like(self.img)
@@ -38,8 +49,9 @@ class Interferogram(DigitalImage):
     # Put mask
     ci, cj = h // 2, w // 2
     d = int(0.05 * min(h, w))
-    mask[ci-d:ci+d, :] = 0
-    mask[:, cj-d:] = 0
+    # mask[ci-d:ci+d, :] = 0
+    mask[ci-d:ci+d, cj-d:cj+d] = 0
+    mask[:, cj+d:] = 0
     return mask
 
   @property
@@ -55,6 +67,7 @@ class Interferogram(DigitalImage):
     def _find_peak():
       region = self.Sc
       index = np.unravel_index(np.argmax(region * self.peak_mask), region.shape)
+      self._set_fourier_prior(index)
       return index
     return self.get_from_pocket('index_of_+1_point', initializer=_find_peak)
 
@@ -87,6 +100,11 @@ class Interferogram(DigitalImage):
     return self.get_from_pocket(
       'extracted_image',
       initializer=lambda: np.fft.ifft2(np.fft.ifftshift(self.homing_signal)))
+
+  @property
+  def extracted_angle(self) -> np.ndarray:
+    return self.get_from_pocket(
+      'extracted_angle', initializer=lambda: np.angle(self.extracted_image))
 
   @property
   def delta_angle(self) -> np.ndarray:
@@ -146,7 +164,64 @@ class Interferogram(DigitalImage):
 
   # endregion: Properties
 
+  # region: Private Methods
+
+  def _set_fourier_prior(self, peak_index: Tuple[int, int]):
+    H, W = self.size
+    ci, cj = H // 2, W // 2
+    pi, pj = peak_index
+    i, j = pi - ci, pj - cj
+    setattr(self, self.Keys.fourier_prior, np.array([i / H, j / W]))
+
+  def _get_unit_vector(self, v: Optional[np.ndarray] = None):
+    """Used for get the (omaga=0, r=1.0) vector for generating
+       fourier basis stack"""
+    assert self.radius > 0
+    if v is None: v = self.fourier_prior
+    d = np.linalg.norm([
+      pi - L // 2 for L, pi in zip(self.size, self.peak_index)])
+    return v / d * self.radius
+
+  # endregion: Private Methods
+
   # region: Public Methods
+
+  def get_model_input(self, index):
+    if index == 1: return self.img
+    elif index == 2: return np.stack(
+      [np.real(self.extracted_image), np.imag(self.extracted_image)], axis=-1)
+    elif index == 3: return np.stack(
+      [np.abs(self.extracted_image), self.extracted_angle], axis=-1)
+    else: raise KeyError('!! index must be in (1, 2, 3)')
+
+  def get_fourier_prior(self, L, angle=0, r=1.0, fmt='default'):
+    # Get location of +1 point
+    loc = self.fourier_prior
+    if angle != 0: loc = rotate_coord(loc, angle)
+    if r != 1.0: loc = [r * l for l in loc]
+    return self.get_fourier_basis(*loc, L, fmt=fmt)
+
+  def get_fourier_prior_stack(
+      self, L, angle, omega=30, rs=(0.3, 0.6, 0.9), fmt='real'):
+    loc = self.fourier_prior
+    if angle != 0: loc = rotate_coord(loc, angle)
+
+    # Initialize with center component
+    priors = [self.get_fourier_basis(*loc, L, fmt=fmt)]
+
+    # Rotate loc with around +1 point and append corresponding basis
+    uv = self._get_unit_vector(loc)
+    for a in range(0, 180, omega):
+      _uv = rotate_coord(uv, a)
+      for r in rs:
+        assert r > 0
+        _loc = loc + r * _uv
+        priors.append(self.get_fourier_basis(*_loc, L, fmt=fmt))
+
+    # Stack/Concatenate priors and return
+    if len(priors[0].shape) == 2: return np.stack(priors, axis=-1)
+    assert len(priors[0].shape) == 3
+    return np.concatenate(priors, axis=-1)
 
   def rotate(self, angle: float):
     img = self.rotate_image(self.img, angle)
@@ -185,39 +260,37 @@ class Interferogram(DigitalImage):
     bg = super().imread(bg_path, return_array=True) if bg_path else None
     return Interferogram(img, bg, radius)
 
-  def imshow(self, interferogram=True, spectrum=False, extracted=False,
-             angle=False, unwrapped=False, flattened=False, sample_mask=False,
-             **kwargs):
-    """Show this image
-    :param show_fc: whether to show Fourier coefficients
-    """
-    imgs, titles = [], []
-    def append_img(img, title):
-      imgs.append(img)
-      titles.append(title)
+  def dashow(self, size=7, show_calibration=True):
+    if self._backgrounds is None: show_calibration = False
 
-    # (0) interferogram
-    if interferogram: append_img(self.img, 'Interferogram')
-    # (1) spectrum
-    if spectrum:
-      im = np.log(self.Sc + 1)
-      im = (im, lambda: plt.gca().add_artist(plt.Circle(
+    da = DaVinci('Interferogram Analyzer', size, size)
+    da.add_imshow_plotter(self.img, 'Interferogram With Sample')
+    if show_calibration:
+      da.add_imshow_plotter(self.bg_array, 'Interferogram for Calibration')
+
+    da.add_imshow_plotter(
+      np.log(self.Sc + 1), 'Centered Spectrum (log)',
+      lambda: plt.gca().add_artist(plt.Circle(
         list(reversed(self.peak_index)), self.radius, color='r', fill=False)))
-      imgs.append(im)
-      titles.append('Centered Spectrum (log)')
-    # (2) extracted image
-    if extracted: append_img(np.abs(self.extracted_image), 'Extracted')
-    # (3) show retrieved phase
-    if angle: append_img(self.delta_angle, 'Angle')
-    # (4) Unwrapped phase image
-    if unwrapped: append_img(self.unwrapped_phase, 'Unwrapped')
-    # (5) Balanced phase image
-    if flattened: append_img(self.flattened_phase, 'Flattened')
-    # (6) Sample mask
-    if sample_mask: append_img(self.soft_mask(), 'Sample Mask')
+    da.add_imshow_plotter(
+      np.real(self.extracted_image), 'Extracted Image (Real)')
+    da.add_imshow_plotter(
+      np.imag(self.extracted_image), 'Extracted Image (Imag)')
+    da.add_imshow_plotter(
+      np.abs(self.extracted_image), 'Extracted Image (Magnitude)')
+    da.add_imshow_plotter(self.extracted_angle, 'Extracted Angle')
 
-    # Show image using lambo.imshow
-    imshow(*imgs, titles=titles, **kwargs)
+    if show_calibration:
+      da.add_imshow_plotter(
+        self._backgrounds[0].extracted_angle, 'Background Angle')
+      da.add_imshow_plotter(self.delta_angle, 'Calibrated Phase')
+      da.add_imshow_plotter(self.unwrapped_phase, 'Unwrapped Phase',
+                            color_bar=True)
+      roma.console.show_status('Fitting background plane ...')
+      da.add_imshow_plotter(self.flattened_phase, 'Flattened Phase',
+                            color_bar=True)
+
+    da.show()
 
   def set_flatten_configs(self, **configs):
     self.put_into_pocket('flatten_configs', configs)
@@ -353,6 +426,43 @@ class Interferogram(DigitalImage):
     # Show images
     imshow(*images, titles=titles, max_cols=2)
 
+  def show_fourier_basis(self, L=50, angles=0, rs=1.0):
+    if isinstance(angles, int): angles = (angles,)
+    if isinstance(rs, (int, float)): rs = (rs,)
+
+    da = DaVinci('Fourier Basis', height=7, width=7)
+    for a in angles:
+      im = self.img
+      im = self.get_downtown_area(self.rotate_image(im, a))
+      da.objects.append(im[:L, :L])
+      for r in rs: da.objects.append(
+        self.get_fourier_prior(L, a, r, fmt='real', prior_type='cube'))
+    da.add_plotter(da.imshow)
+    da.show()
+
+  def show_dettol(self, L, angle=0, omega=30, rs=(0.3, 0.6, 0.9),
+                  show_what='sc'):
+    # Initialize da
+    da = DaVinci('Dettol', height=7, width=7, init_as_image_viewer=True)
+
+    # Get basis
+    stack = self.get_fourier_prior_stack(L, angle, omega, rs)
+    assert len(stack.shape) == 3
+    basis = [stack[:, :, i] for i in range(stack.shape[-1])]
+
+    # Show dettol
+    if show_what in ('sc', 'spectrum'):
+      da.add_image(
+        np.sum([DigitalImage(b).Sc for b in basis], axis=0), 'Spectrum')
+      da.add_image(
+        DigitalImage(self.img[:L, :L]).Sc, 'Spectrum of Interferogram')
+      da.show()
+      return
+
+    assert show_what in ('basis', 'img')
+    da.objects = basis
+    da.show()
+
   # endregion: Analysis
 
 
@@ -362,13 +472,18 @@ if __name__ == '__main__':
   data_dir = r'E:\lambai\01-PR\data'
 
   trial_id = 1
-  sample_id = 1
-  pattern = '*02-*'
+  sample_id = 2
+  # pattern = '*06-*'
+  pattern = None
   ig = PRAgent.read_interferogram(
-    data_dir, trial_id, sample_id, pattern=pattern)
-  ig.imshow(unwrapped=True, spectrum=True)
+    data_dir, trial_id, sample_id, pattern=pattern, radius=80)
+  # ig = ig.rotate(10)
 
+  ig.dashow()
   # ig.analyze_windows(4)
+  # ig.show_fourier_basis(100, rs=(0.8, 1.0, 1.2))
+  # ig.show_dettol(100, angle=0, omega=30, rs=(0.3, 0.6, 0.9,), show_what='img')
+
 
 
 

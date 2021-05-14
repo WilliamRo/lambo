@@ -1,4 +1,90 @@
 import numpy as np
+from scipy.ndimage import median_filter
+
+
+def fit_plane_adaptively(
+    x: np.ndarray, n_points=200, low=1, high=(10, 25, 40, 60), max_rounds=3,
+    alpha=0.2, filter_size: int = 0):
+  """Adaptively fit plane based on the criteria below
+           score = b - alpha * r
+      in which b is global background score and r is the local fitting residual
+  """
+  # Sanity check
+  if not isinstance(high, (tuple, list)):
+    assert isinstance(high, int) and high > low
+    high = high,
+
+  # Initialize some variables
+  bg = 0
+  best_score, best_p, best_r, best_b = -np.infty, None, None, None
+
+  # Run at most k iterations
+  for k in range(max_rounds):
+    x_base = x if filter_size == 0  else median_filter(x, filter_size)
+
+    # Go over all `high` values, select the one with highest score
+    mask_base = x_base - bg
+    bg, p, r, b = sorted(
+      [fit_plane(x_base, n_points, low, h, mask_base) for h in high],
+      key=lambda z: z[3] - alpha * z[2], reverse=True)[0]
+    score = b - alpha * r
+
+    # Take down if necessary
+    if score > best_score:
+      bg, best_score, best_p, best_r, best_b = bg, score, p, r, b
+    else:
+      break
+
+  # Return best results
+  assert best_p is not None
+  return bg, best_p, best_r, best_b
+
+
+def fit_plane(x: np.ndarray, n_points=100, low=1, high=30, mask_base=None):
+  """Given an input image of shape (H, W), fit a plane
+       z = a*x + b*y + c
+    that properly fit the background of this image.
+
+    Assume background points are {x_i, y_i, z_i}_{i=1}^N, the problems becomes
+       min_p ||A \cdot p - z||_2
+    with an analytical solution
+      p = [a, b, c]^T = (A^T \cdot A)^{-1} \cdot A^T \cdot z
+    where A[i] = [x_i, y_i, 1].
+  """
+  # Get background mask
+  if mask_base is None: mask_base = x
+  mask = get_bg_mask(mask_base, low=low, high=high)
+
+  # Points in mask are too many, we only use at most `n_points` pixels to fit
+  #   the plane
+  coord = np.argwhere(mask)
+  step = max(1, len(coord) // n_points)
+  coord = coord[::step]
+
+  # Fit a plane
+  A = np.vstack([[i, j, 1.0] for i, j in coord])
+  z = [x[i, j] for i, j in coord]
+  p, r = np.linalg.lstsq(A, z, rcond=None)[:2]
+
+  # Calculate background and flatness
+  H, W = x.shape
+  X, Y = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+  bg = p[0] * X + p[1] * Y + p[2]
+
+  # Calculate local fitting score
+  r = 1000 * r[0] / n_points
+
+  # Calculate global fitting score
+  b = np.mean(1. / (1. + np.square(x - bg))) * 100
+
+  # Return
+  return bg, p, r, b
+
+
+def get_bg_mask(x: np.ndarray, low=0.5, high=20):
+  bg_min = np.percentile(x, low)
+  bg_max = np.percentile(x, high)
+  return (x > bg_min) * (x < bg_max)
 
 
 def analyze_bg_extraction(x: np.ndarray, **kwargs):
@@ -63,89 +149,6 @@ def analyze_bg_extraction(x: np.ndarray, **kwargs):
   bind_quick_close()
   plt.tight_layout()
   plt.show()
-
-
-def fit_plane_adaptively(
-    x: np.ndarray, n_points=200, low=1, high=(10, 25, 40, 60), max_rounds=3,
-    alpha=0.2):
-  """Adaptively fit plane based on the criteria below
-           score = b - alpha * r
-      in which b is global background score and r is the local fitting residual
-  """
-  # Sanity check
-  if not isinstance(high, (tuple, list)):
-    assert isinstance(high, int) and high > low
-    high = high,
-
-  # Initialize some variables
-  bg = 0
-  best_score, best_p, best_r, best_b = -np.infty, None, None, None
-
-  # Run at most k iterations
-  for k in range(max_rounds):
-    # Go over all `high` values, select the one with highest score
-    mask_base = x - bg
-    bg, p, r, b = sorted(
-      [fit_plane(x, n_points, low, h, mask_base) for h in high],
-      key=lambda z: z[3] - alpha * z[2], reverse=True)[0]
-    score = b - alpha * r
-
-    # Take down if necessary
-    if score > best_score:
-      bg, best_score, best_p, best_r, best_b = bg, score, p, r, b
-    else:
-      break
-
-  # Return best results
-  assert best_p is not None
-  return bg, best_p, best_r, best_b
-
-
-def fit_plane(x: np.ndarray, n_points=100, low=1, high=30, mask_base=None):
-  """Given an input image of shape (H, W), fit a plane
-       z = a*x + b*y + c
-    that properly fit the background of this image.
-
-    Assume background points are {x_i, y_i, z_i}_{i=1}^N, the problems becomes
-       min_p ||A \cdot p - z||_2
-    with an analytical solution
-      p = [a, b, c]^T = (A^T \cdot A)^{-1} \cdot A^T \cdot z
-    where A[i] = [x_i, y_i, 1].
-  """
-  # Get background mask
-  if mask_base is None: mask_base = x
-  mask = get_bg_mask(mask_base, low=low, high=high)
-
-  # Points in mask are too many, we only use at most `n_points` pixels to fit
-  #   the plane
-  coord = np.argwhere(mask)
-  step = max(1, len(coord) // n_points)
-  coord = coord[::step]
-
-  # Fit a plane
-  A = np.vstack([[i, j, 1.0] for i, j in coord])
-  z = [x[i, j] for i, j in coord]
-  p, r = np.linalg.lstsq(A, z, rcond=None)[:2]
-
-  # Calculate background and flatness
-  H, W = x.shape
-  X, Y = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-  bg = p[0] * X + p[1] * Y + p[2]
-
-  # Calculate local fitting score
-  r = 1000 * r[0] / n_points
-
-  # Calculate global fitting score
-  b = np.mean(1. / (1. + np.square(x - bg))) * 100
-
-  # Return
-  return bg, p, r, b
-
-
-def get_bg_mask(x: np.ndarray, low=0.5, high=20):
-  bg_min = np.percentile(x, low)
-  bg_max = np.percentile(x, high)
-  return (x > bg_min) * (x < bg_max)
 
 
 def fit_plane_v1_deprecated(img: np.ndarray, radius=0.05):

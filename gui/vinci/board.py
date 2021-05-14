@@ -2,6 +2,8 @@ from matplotlib.gridspec import GridSpec
 from matplotlib import cm
 
 from lambo.abstract.noear import Nomear
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.mplot3d import Axes3D
 
 import inspect
 import matplotlib
@@ -22,10 +24,12 @@ class Board(Nomear):
   class Keys:
     figure = 'FIGURE'
     axes = 'AXES'
+    axes3d = 'AXES3D'
 
   def __init__(self, title=None, height=5, width=5):
     self.objects = []
-    self.layer_plotter = []
+    self.object_titles = []
+    self.layer_plotters = []
 
     self._object_cursor = 0
     self._layer_cursor = 0
@@ -35,6 +39,11 @@ class Board(Nomear):
     self.fig_height = height
     self.fig_width = width
 
+    # 3D options
+    self.keep_3D_view_angle = False
+    self.view_angle = None
+    self.z_lim = None
+
   # region: Properties
 
   @property
@@ -43,7 +52,7 @@ class Board(Nomear):
 
   @object_cursor.setter
   def object_cursor(self, val):
-    if not self.objects: return
+    if len(self.objects) == 0: return
     previous_cursor = self.object_cursor
     self._object_cursor = val % len(self.objects)
     if self.object_cursor != previous_cursor: self._draw()
@@ -54,15 +63,21 @@ class Board(Nomear):
 
   @layer_cursor.setter
   def layer_cursor(self, val):
-    if not self.layer_plotter: return
+    if len(self.layer_plotters) == 0: return
     previous_cursor = self.layer_cursor
-    self._layer_cursor = val % len(self.layer_plotter)
+    self._layer_cursor = val % len(self.layer_plotters)
     if self.layer_cursor != previous_cursor: self._draw()
 
   @property
   def current_plotter(self):
-    if not self.layer_plotter: return self.show_text
-    return self.layer_plotter[self.layer_cursor]
+    if not self.layer_plotters: return self.show_text
+    return self.layer_plotters[self.layer_cursor]
+
+  @property
+  def current_plotter_is_3D(self):
+    # Get method signature
+    sig = inspect.signature(self.current_plotter).parameters
+    return any([key in sig.keys() for key in ('axes3d', 'ax3d')])
 
   @property
   def figure(self) -> plt.Figure:
@@ -83,6 +98,11 @@ class Board(Nomear):
     return self.get_from_pocket(self.Keys.axes, initializer=init_axes)
 
   @property
+  def axes3d(self) -> Axes3D:
+    init_axes = lambda: self.figure.add_subplot(111, projection='3d')
+    return self.get_from_pocket(self.Keys.axes3d, initializer=init_axes)
+
+  @property
   def backend(self) -> str:
     return matplotlib.get_backend()
 
@@ -99,6 +119,10 @@ class Board(Nomear):
     result = ''
     if len(self.objects) > 0:
       result = '[{}/{}]'.format(self.object_cursor + 1, len(self.objects))
+    if len(self.layer_plotters) > 0:
+      result += '[{}/{}]'.format(
+        self.layer_cursor + 1, len(self.layer_plotters))
+
     if self.title is not None:
       result += ' ' + self.title
     if not result: return 'Untitled'
@@ -124,12 +148,33 @@ class Board(Nomear):
     # Plot
     self.current_plotter(**kwargs)
 
+    # Set view angle if necessary
+    if self.current_plotter_is_3D:
+      if self.keep_3D_view_angle and self.view_angle is not None:
+        self.axes3d.view_init(*self.view_angle)
+      if self.z_lim is not None:
+        assert len(self.z_lim) == 2
+        self.axes3d.set_zlim3d(*self.z_lim)
+
     # Tight layout and refresh
     plt.tight_layout()
+
+    # Refresh
     self.canvas.draw()
 
   def _clear(self):
-    self.axes.cla()
+    # Clear 2D axes
+    if self.Keys.axes in self._pocket:
+      self._pocket.pop(self.Keys.axes)
+
+    # Clear 3D axes
+    if self.Keys.axes3d in self._pocket:
+      if self.keep_3D_view_angle:
+        self.view_angle = (self.axes3d.elev, self.axes3d.azim)
+      self._pocket.pop(self.Keys.axes3d)
+
+    # Clear figure
+    self.figure.clear()
 
   def _get_kwargs_for_plotter(self, plotter):
     assert callable(plotter)
@@ -138,7 +183,7 @@ class Board(Nomear):
     # Get key-word arguments for method according to its signature
     kwargs = {}
     for kw in sig.keys():
-      if kw in ('obj', 'x', 'img'):
+      if kw in ('obj', 'x', 'img', 'im'):
         kwargs[kw] = self.objects[self.object_cursor]
       elif kw in ('figure', 'fig'):
         kwargs[kw] = self.figure
@@ -146,6 +191,11 @@ class Board(Nomear):
         kwargs[kw] = self.canvas
       elif kw in ('axes', 'ax'):
         kwargs[kw] = self.axes
+      elif kw in ('axes3d', 'ax3d'):
+        kwargs[kw] = self.axes3d
+      elif kw in ('title', 'im_title'):
+        if len(self.object_titles) == len(self.objects):
+          kwargs[kw] = self.object_titles[self.object_cursor]
     return kwargs
 
   def _begin_loop(self):
@@ -179,11 +229,38 @@ class Board(Nomear):
 
   def add_plotter(self, method, index=-1):
     assert callable(method)
-    self.layer_plotter.insert(index, method)
+    if index == -1: index = len(self.layer_plotters)
+    self.layer_plotters.insert(index, method)
+
+  def add_imshow_plotter(
+      self, image, title=None, finalize=None, color_bar=False):
+    def plotter(ax: plt.Axes):
+      self.imshow(image, ax, title=title, color_bar=color_bar)
+      if callable(finalize): finalize()
+    self.add_plotter(plotter)
+
+  def add_image(self, im, title=None):
+    self.objects.append(im)
+    if title is not None: self.object_titles.append(title)
 
   # endregion: Public Methods
 
   # region: Plotter Library
+
+  # region: Toolbox
+
+  def set_im_axes(self, ax: plt.Axes = None, title=None):
+    if ax is None: ax = self.axes
+    ax.set_axis_off()
+    if title: ax.set_title(title)
+
+  # endregion: Toolbox
+
+  @staticmethod
+  def histogram(x: np.ndarray, ax: plt.Axes, bins=20, density=True):
+    pixels = np.ravel(x)
+    ax.hist(pixels, bins=bins, density=density)
+    ax.set_aspect('auto')
 
   @staticmethod
   def show_text(ax: plt.Axes, text="Yo, what's up."):
@@ -194,18 +271,46 @@ class Board(Nomear):
   @staticmethod
   def imshow(x: np.ndarray, ax: plt.Axes = None, title=None, cmap=None,
              norm=None, aspect=None, interpolation=None, alpha=None,
-             vmin=None, vmax=None):
+             vmin=None, vmax=None, color_bar=False):
     # Get current axes if ax is not provided
     if ax is None: ax = plt.gca()
     # Clear axes before drawing
     ax.cla()
     # Show images
-    ax.imshow(x, cmap=cmap, norm=norm, aspect=aspect,
-              interpolation=interpolation, alpha=alpha, vmin=vmin, vmax=vmax)
+    im = ax.imshow(
+      x, cmap=cmap, norm=norm, aspect=aspect, interpolation=interpolation,
+      alpha=alpha, vmin=vmin, vmax=vmax)
+
+    # Set color bar if required
+    if color_bar:
+      divider = make_axes_locatable(ax)
+      cax = divider.append_axes('right', size='5%', pad=0.05)
+      plt.colorbar(im, cax=cax)
 
     # Set title if provided
     if title: ax.set_title(title)
     ax.set_axis_off()
+
+  @staticmethod
+  def scatter(X, Y, Z, ax3d: Axes3D, **kwargs):
+    ax3d.scatter(X, Y, Z, c=Z, **kwargs)
+
+  @staticmethod
+  def plot_im_as_3d(im: np.ndarray, func, **kwargs) -> plt.Axes:
+    H, W = im.shape
+    X, Y = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+    return func(X, Y, im, **kwargs)
+
+  @staticmethod
+  def plot3d(im: np.ndarray, ax3d: Axes3D, cmap=cm.coolwarm, title=None,
+             **kwargs):
+    r = Board.plot_im_as_3d(im, ax3d.plot_surface, cmap=cmap, **kwargs)
+    if title is not None: ax3d.set_title(title)
+    return r
+
+  @staticmethod
+  def plot_wireframe(im: np.ndarray, ax3d: Axes3D, color='green', **kwargs):
+    return Board.plot_im_as_3d(im, ax3d.plot_wireframe, color=color, **kwargs)
 
   # endregion: Plotter Library
 
@@ -221,6 +326,9 @@ class Board(Nomear):
     print('Information of object[{}]:'.format(self.object_cursor + 1))
     print('.. Shape = {}'.format(data.shape))
     print('.. Range = [{:.3f}, {:.3f}]'.format(np.min(data), np.max(data)))
+
+  def slc(self, n: int): self.layer_plotters = n - 1
+  def soc(self, n: int): self.object_titles = n - 1
 
   # endregion: Build-in Commands
 

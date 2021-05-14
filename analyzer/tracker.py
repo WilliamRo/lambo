@@ -1,4 +1,5 @@
-from lambo.abstract.noear import Nomear
+from lambo.gui.vinci.vinci import DaVinci
+
 from lambo.misc.local import walk
 from pandas import DataFrame, Series
 from roma import console
@@ -7,37 +8,43 @@ from typing import Callable, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import pandas as pd
+import pandas as p
 import pims
 import time
 import trackpy as tp
 import warnings
 
 
-class Tracker(Nomear):
+class Tracker(DaVinci):
 
-  class Keys:
-    figure = 'FIGURE'
-    axes = 'AXES'
-
+  class Keys(DaVinci.Keys):
     locations = 'LOCATIONS'
+    trajectories = 'TRAJECTORIES'
     n_frames = 'N_FRAMES'
 
+
   def __init__(self, frames, size: int = 5, **kwargs):
+    # Call parent's constructor
+    super(Tracker, self).__init__('Nuclei Browser', height=size, width=size)
+
+    # Specific attributes
     self.raw_frames = frames
-    self.images = frames / np.max(frames)
+    self.images: np.ndarray = frames / np.max(frames)
+    self.objects = self.images
+    self.layer_plotter = [self.imshow]
 
     # Attributes for display
-    self._size = size
-    self._refresh = None
-    self._cursor = 0
-    self._layer_cursor = 0
-    self.layers = [self.show_raw_frames]
-
     self.kwargs = kwargs
 
     # Suppress all warnings
     warnings.filterwarnings('ignore')
+
+    # Configurations
+    self.locate_configs = {}
+    self.link_configs = {}
+
+    self.effective_locate_config = {}
+    self.effective_link_config = {}
 
   # region: Properties
 
@@ -46,48 +53,29 @@ class Tracker(Nomear):
     return getattr(self.raw_frames, '_filename')
 
   @property
-  def cursor(self) -> int:
-    return self._cursor
-
-  @cursor.setter
-  def cursor(self, val: int):
-    self._cursor = val % self.n_frames
-
-  @property
-  def cursor_str(self):
-    return '[{}/{}]'.format(self.cursor + 1, self.n_frames)
-
-  @property
   def n_frames(self):
     return self.get_from_pocket(self.Keys.n_frames, len(self.images))
 
   @n_frames.setter
-  def n_frames(self, val):
+  def n_frames(self, val: int):
+    self.objects = self.images[:val]
     self.put_into_pocket(self.Keys.n_frames, val)
 
   @property
-  def figure(self) -> plt.Figure:
-    if self.Keys.figure not in self._pocket:
-      self.figure = plt.figure(figsize=(self._size, self._size))
-    return self.get_from_pocket(self.Keys.figure)
+  def locations(self) -> DataFrame:
+    return self.get_from_pocket(self.Keys.locations, None)
+
+  @locations.setter
+  def locations(self, val: DataFrame):
+    self.put_into_pocket(self.Keys.locations, val, exclusive=False)
 
   @property
-  def canvas(self) -> plt.FigureCanvasBase:
-    return self.figure.canvas
+  def trajectories(self):
+    return self.get_from_pocket(self.Keys.trajectories, None)
 
-  @figure.setter
-  def figure(self, val: plt.Figure):
-    self.put_into_pocket(self.Keys.figure, val)
-
-  @property
-  def axes(self) -> plt.Axes:
-    if self.Keys.axes not in self._pocket:
-      self.axes = self.figure.add_subplot(111)
-    return self.get_from_pocket(self.Keys.axes)
-
-  @axes.setter
-  def axes(self, val: plt.Axes):
-    self.put_into_pocket(self.Keys.axes, val)
+  @trajectories.setter
+  def trajectories(self, val):
+    self.put_into_pocket(self.Keys.trajectories, val, exclusive=False)
 
   # endregion: Properties
 
@@ -120,135 +108,166 @@ class Tracker(Nomear):
 
   # endregion: Static Methods
 
+  # region: Setting
+
+  def get_update_function(self, config_dict: dict):
+    def update(key, value):
+      if value is None: return
+      config_dict[key] = value
+    return update
+
+  def config_locate(self,
+                    diameter: int = None,
+                    minmass: float = None,
+                    maxsize: float = None,
+                    separation: float = None,
+                    noise_size: float = None,
+                    smoothing_size: float = None,
+                    threshold: float = None,
+                    invert: bool = False,
+                    percentile: float = None,
+                    topn: int = None,
+                    preprocess: bool = None,
+                    max_iterations: int = None,
+                    characterize: bool = None,
+                    engine: str = None):
+    # Sanity check
+    assert engine in (None, 'auto', 'python', 'numba')
+
+    # Update locate_config accordingly
+    update = self.get_update_function(self.locate_configs)
+    update('diameter', diameter)
+    update('minmass', minmass)
+    update('maxsize', maxsize)
+    update('separation', separation)
+    update('noise_size', noise_size)
+    update('smoothing_size', smoothing_size)
+    update('threshold', threshold)
+    update('invert', invert)
+    update('percentile', percentile)
+    update('topn', topn)
+    update('preprocess', preprocess)
+    update('max_iterations', max_iterations)
+    update('characterize', characterize)
+    update('engine', engine)
+
+  def config_link(self,
+                  search_range: float = None,
+                  memory: int = None,
+                  adaptive_stop: float = None,
+                  adaptive_step: float = None,
+                  neighbor_strategy: str = None,
+                  link_strategy: str = None):
+
+    # Sanity check
+    assert neighbor_strategy in ('KDTree', 'BTree', None)
+    assert link_strategy in (
+      'recursive', 'nonrecursive', 'numba', 'hybrid', 'drop', 'auto', None)
+
+    # Update link_config accordingly
+    update = self.get_update_function(self.link_configs)
+    update('search_range', search_range)
+    update('memory', memory)
+    update('adaptive_stop', adaptive_stop)
+    update('adaptive_step', adaptive_step)
+    update('neighbor_strategy', neighbor_strategy)
+    update('link_strategy', link_strategy)
+
+  # endregion: Setting
+
   # region: Visualization
 
-  def _default_key_event(self, event):
-    key = event.key
-    if key in ('escape', 'q'):
-      plt.close('all')
-      return
-    elif key in ('j', 'right'):
-      self.cursor += 1
-    elif key in ('k', 'left'):
-      self.cursor -= 1
-    elif key in ('h', 'down'):
-      self._layer_cursor -= 1
-    elif key in ('l', 'up'):
-      self._layer_cursor += 1
-    else:
-      print('>> key "{}" pressed'.format(event.key))
-      return
-    self.refresh()
+  def show_locations(self, show_traj=False, **locate_configs):
+    # TODO: for some reason, locate config can be modified here
+    # self.locate_configs has the highest priority
+    locate_configs.update(self.locate_configs)
 
-  def initialize_plot(self, key_press_event: Optional[Callable] = None):
-    self.canvas.set_window_title(self.file_name)
-    self.canvas.mpl_disconnect(self.canvas.manager.key_press_handler_id)
+    # Calculate location if not exist
+    if self.locations is None:
+      self.locate(plot_progress=True, **locate_configs)
+    configs = self.effective_locate_config
+    df = self.locations
 
-    # Bind events if provided
-    if key_press_event is not None:
-      assert callable(key_press_event)
-      plt.connect('key_press_event', key_press_event)
+    # Link location if necessary
+    if show_traj:
+      if self.trajectories is None: self.link()
+      configs = self.effective_link_config
+      df = self.trajectories
 
-  def refresh(self):
-    if not self.layers: return
-    # Clear axes
-    self.axes.cla()
-    # Get layer cursor
-    layer_cursor = self._layer_cursor % len(self.layers)
+    # Display
+    df = df[df['frame'] == self.object_cursor]
+    tp.annotate(df, self.raw_frames[self.object_cursor], ax=self.axes)
 
-    # Call layer method
-    self.layers[layer_cursor]()
+    # Set title
+    title = ', '.join(['{} = {}'.format(k, v) for k, v in configs.items()])
+    self.set_im_axes(title=title)
 
-    # Tight layout and draw
-    self.figure.tight_layout()
-    self.canvas.draw()
-
-  def view(self, *layer_methods):
-    self.initialize_plot(self._default_key_event)
-    # Set refresh function if provided
-    for method in layer_methods: self.layers.append(method)
-    # Refresh and show
-    self.refresh()
-    plt.show()
+    return self.locations
 
   # endregion: Visualization
 
-  # region: Layers
+  # region: Analysis
 
-  # region: Toolbox
+  def locate(self, diameter=7, plot_progress=False, **configs):
+    configs['diameter'] = diameter
 
-  def set_axes_style(self, title=''):
-    self.axes.set_axis_off()
-    self.axes.set_title('[{}/{}] {}'.format(
-      self.cursor + 1, self.n_frames, title))
+    # self.locate_configs has the highest priority
+    configs.update(self.locate_configs)
 
-  def show_text(self, text):
-    self.axes.cla()
-    self.axes.text(0.5, 0.5, text, ha='center', va='center')
-    self.axes.set_axis_off()
-    self.canvas.draw()
+    # Calculate locations
+    tic = time.time()
 
-  # endregion: Toolbox
+    # Locate
+    tp.quiet()
 
-  def show_raw_frames(self):
-    self.axes.imshow(self.images[self.cursor])
-    self.set_axes_style()
+    def after_locate(frame_no, features):
+      # Plot progress if required
+      if plot_progress:
+        self.show_text(self.axes, 'Calculating {}/{} ...'.format(
+          frame_no, self.n_frames))
+        self.canvas.draw()
+      console.print_progress(frame_no, self.n_frames, start_time=tic)
+      return features
 
-  def raw_frames_hist(self):
-    pixels = np.ravel(self.images[self.cursor])
-    self.axes.hist(pixels, bins=20, density=True)
-    self.axes.set_xlim(0, 1)
-    self.axes.set_ylim(0, 20)
-    self.axes.set_aspect('auto')
-    self.axes.set_title(self.cursor_str + ' Histogram of raw image')
+    self.locations = tp.batch(
+      self.objects, processes=0, after_locate=after_locate, **configs)
 
-  def locate(self, diameter, **kwargs):
-    kwargs.get('minmass', None)
-    kwargs.get('maxsize', None)
-    kwargs.get('separation', None)
-    kwargs.get('noise_size', None)
-    kwargs.get('smooth_size', None)
-    kwargs.get('threshold', None)
-    kwargs.get('invert', None)
-    kwargs.get('percentile', None)
-    kwargs.get('topn', None)
+    console.show_status('Locating completed. Configurations:')
+    console.supplement(configs)
 
-    def method():
-      if self.Keys.locations not in self._pocket:
-        # Calculate locations
-        data_frames = []
-        tic = time.time()
-        for i in range(self.n_frames):
-          self.show_text('Calculating {}/{} ...'.format(i + 1, self.n_frames))
-          df = tp.locate(self.images[i], diameter, **kwargs)
-          data_frames.append(df)
-          console.print_progress(i + 1, self.n_frames, start_time=tic)
+    # Clear status
+    if plot_progress: self.axes.cla()
 
-        self.put_into_pocket(self.Keys.locations, data_frames, exclusive=False)
-        console.show_status('Locating completed. Configurations:')
-        kwargs['diameter'] = diameter
-        console.supplement(kwargs)
+    self.effective_locate_config = configs
 
-        # Clear status
-        self.axes.cla()
+  def link(self, search_range: int = 5, memory: int = 2, **configs):
+    # Make sure particles have been located
+    if self.locations is None:
+      print(' ! No locations found.')
+      return
 
-      # Display
-      dfs = self.get_from_pocket(self.Keys.locations)
-      tp.annotate(dfs[self.cursor], self.raw_frames[self.cursor], ax=self.axes)
-      # Set title
-      title = ', '.join(['{} = {}'.format(k, v) for k, v in kwargs.items()])
-      self.set_axes_style(title)
+    configs['search_range'] = search_range
+    configs['memory'] = memory
 
-    return method
+    # self.link_config has the highest priority
+    configs.update(self.link_configs)
 
-  # endregion: Layers
+    # Link locations
+    self.trajectories = tp.link(self.locations, **configs)
+    console.show_status('Linking completed. Configurations:')
+    console.supplement(configs)
 
-  # region: Refresh Methods
+    self.effective_link_config = configs
 
-  def locate_probe(self, diameter, n_frames=None, **kwargs):
-    pass
+    self._draw()
 
-  # endregion: Refresh Methods
+  def filter_traj(self, threshold: int):
+    self.trajectories = tp.filter_stubs(self.trajectories, threshold)
+    self.effective_link_config['threshold'] = threshold
+
+    self._draw()
+
+  # endregion: Analysis
 
 
 if __name__ == '__main__':
@@ -259,8 +278,11 @@ if __name__ == '__main__':
   minmass = 0.2
 
   tk = Tracker.read_by_index(data_dir, index, show_info=True)
-  # tk.n_frames = 5
-  tk.view(
-    tk.raw_frames_hist,
-    tk.locate(diameter=diameter, minmass=minmass),
-  )
+  # tk.n_frames = 10
+  tk.config_locate(diameter=diameter, minmass=minmass)
+
+  tk.add_plotter(tk.imshow)
+  tk.add_plotter(tk.histogram)
+  tk.add_plotter(tk.show_locations)
+  tk.add_plotter(lambda: tk.show_locations(show_traj=True))
+  tk.show()
