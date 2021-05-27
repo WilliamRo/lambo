@@ -4,6 +4,7 @@ from matplotlib import cm
 from lambo.abstract.noear import Nomear
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.mplot3d import Axes3D
+from typing import Tuple, Optional
 
 import inspect
 import matplotlib
@@ -42,7 +43,7 @@ class Board(Nomear):
     # 3D options
     self.keep_3D_view_angle = False
     self.view_angle = None
-    self.z_lim = None
+    self.z_lim: Optional[Tuple[float, float]] = None
 
   # region: Properties
 
@@ -117,14 +118,13 @@ class Board(Nomear):
   @property
   def win_title(self):
     result = ''
-    if len(self.objects) > 0:
+    if len(self.objects) > 1:
       result = '[{}/{}]'.format(self.object_cursor + 1, len(self.objects))
-    if len(self.layer_plotters) > 0:
+    if len(self.layer_plotters) > 1:
       result += '[{}/{}]'.format(
         self.layer_cursor + 1, len(self.layer_plotters))
 
-    if self.title is not None:
-      result += ' ' + self.title
+    if self.title is not None: result = ' '.join([result, self.title])
     if not result: return 'Untitled'
     return result
 
@@ -327,8 +327,8 @@ class Board(Nomear):
     print('.. Shape = {}'.format(data.shape))
     print('.. Range = [{:.3f}, {:.3f}]'.format(np.min(data), np.max(data)))
 
-  def slc(self, n: int): self.layer_plotters = n - 1
-  def soc(self, n: int): self.object_titles = n - 1
+  def slc(self, n: int): self.layer_cursor = n - 1
+  def soc(self, n: int): self.object_cursor = n - 1
 
   # endregion: Build-in Commands
 

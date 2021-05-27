@@ -9,6 +9,7 @@ from lambo.gui.pyplt.events import bind_quick_close
 from lambo.gui.vinci.vinci import DaVinci
 from lambo.maths.geometry.misc import rotate_coord
 from lambo.maths.geometry.plane import fit_plane_adaptively
+from lambo.misc.timer import Timer
 
 from skimage.restoration import unwrap_phase
 
@@ -107,18 +108,39 @@ class Interferogram(DigitalImage):
       'extracted_angle', initializer=lambda: np.angle(self.extracted_image))
 
   @property
-  def delta_angle(self) -> np.ndarray:
+  def extracted_angle_unwrapped(self) -> np.ndarray:
+    return self.get_from_pocket(
+      'extracted_angle_unwrapped',
+      initializer=lambda: unwrap_phase(self.extracted_angle))
+
+  @property
+  def corrected_image(self) -> np.ndarray:
+    assert all([isinstance(self._backgrounds[0], Interferogram),
+                self.size == self._backgrounds[0].size])
+    return self.get_from_pocket('corrected_image', initializer=lambda: (
+        self.extracted_image / self._backgrounds[0].extracted_image))
+
+  @property
+  def corrected_intensity(self) -> np.ndarray:
+    assert all([isinstance(self._backgrounds[0], Interferogram),
+                self.size == self._backgrounds[0].size])
+    return self.get_from_pocket(
+      'corrected_intensity',
+      initializer=lambda: np.log(np.abs(self.corrected_image)))
+
+  @property
+  def corrected_phase(self) -> np.ndarray:
     """Phase information after subtracting background"""
     assert all([isinstance(self._backgrounds[0], Interferogram),
                 self.size == self._backgrounds[0].size])
-    return self.get_from_pocket('retrieved_phase', initializer=lambda: np.angle(
-      self.extracted_image / self._backgrounds[0].extracted_image))
+    return self.get_from_pocket(
+      'retrieved_phase', initializer=lambda: np.angle(self.corrected_image))
 
   @property
   def unwrapped_phase(self) -> np.ndarray:
     """Result after performing phase unwrapping"""
     return self.get_from_pocket(
-      'unwrapped_phase', initializer=lambda: unwrap_phase(self.delta_angle))
+      'unwrapped_phase', initializer=lambda: unwrap_phase(self.corrected_phase))
 
   @property
   def bg_plane_info(self) -> np.ndarray:
@@ -206,17 +228,19 @@ class Interferogram(DigitalImage):
     loc = self.fourier_prior
     if angle != 0: loc = rotate_coord(loc, angle)
 
-    # Initialize with center component
-    priors = [self.get_fourier_basis(*loc, L, fmt=fmt)]
+    # Initialize with center component TODO: --
+    # priors = [self.get_fourier_basis(*loc, L, fmt=fmt)]
+    priors = []
 
     # Rotate loc with around +1 point and append corresponding basis
-    uv = self._get_unit_vector(loc)
+    # uv = self._get_unit_vector(loc) TODO: --
     for a in range(0, 180, omega):
-      _uv = rotate_coord(uv, a)
+      _uv = rotate_coord(loc, a)
       for r in rs:
         assert r > 0
-        _loc = loc + r * _uv
-        priors.append(self.get_fourier_basis(*_loc, L, fmt=fmt))
+        # _loc = loc + r * _uv #TODO: --
+        _loc = r * _uv
+        priors.append(self.get_fourier_basis(*_loc, L, fmt=fmt, rotundity=True))
 
     # Stack/Concatenate priors and return
     if len(priors[0].shape) == 2: return np.stack(priors, axis=-1)
@@ -272,24 +296,29 @@ class Interferogram(DigitalImage):
       np.log(self.Sc + 1), 'Centered Spectrum (log)',
       lambda: plt.gca().add_artist(plt.Circle(
         list(reversed(self.peak_index)), self.radius, color='r', fill=False)))
-    da.add_imshow_plotter(
-      np.real(self.extracted_image), 'Extracted Image (Real)')
-    da.add_imshow_plotter(
-      np.imag(self.extracted_image), 'Extracted Image (Imag)')
+    # da.add_imshow_plotter(
+    #   np.real(self.extracted_image), 'Extracted Image (Real)')
+    # da.add_imshow_plotter(
+    #   np.imag(self.extracted_image), 'Extracted Image (Imag)')
     da.add_imshow_plotter(
       np.abs(self.extracted_image), 'Extracted Image (Magnitude)')
     da.add_imshow_plotter(self.extracted_angle, 'Extracted Angle')
+    da.add_imshow_plotter(
+      self.extracted_angle_unwrapped, 'Extracted Angle (unwrapped)')
 
     if show_calibration:
       da.add_imshow_plotter(
         self._backgrounds[0].extracted_angle, 'Background Angle')
-      da.add_imshow_plotter(self.delta_angle, 'Calibrated Phase')
+      da.add_imshow_plotter(
+        self._backgrounds[0].extracted_angle_unwrapped,
+        'Background Angle (unwrapped)')
+      # da.add_imshow_plotter(self.corrected_intensity, 'Corrected Intensity')
+      da.add_imshow_plotter(self.corrected_phase, 'Calibrated Phase')
       da.add_imshow_plotter(self.unwrapped_phase, 'Unwrapped Phase',
                             color_bar=True)
       roma.console.show_status('Fitting background plane ...')
       da.add_imshow_plotter(self.flattened_phase, 'Flattened Phase',
                             color_bar=True)
-
     da.show()
 
   def set_flatten_configs(self, **configs):
@@ -436,7 +465,7 @@ class Interferogram(DigitalImage):
       im = self.get_downtown_area(self.rotate_image(im, a))
       da.objects.append(im[:L, :L])
       for r in rs: da.objects.append(
-        self.get_fourier_prior(L, a, r, fmt='real', prior_type='cube'))
+        self.get_fourier_prior(L, a, r, fmt='real'))
     da.add_plotter(da.imshow)
     da.show()
 
@@ -459,9 +488,23 @@ class Interferogram(DigitalImage):
       da.show()
       return
 
-    assert show_what in ('basis', 'img')
+    assert show_what in ('basis', 'img', 'im')
     da.objects = basis
     da.show()
+
+  def analyze_time(self):
+    tm = Timer()
+    with tm.tic_toc('Fourier Transform'):
+      _ = self.Fc
+      _ = self._backgrounds[0].Fc
+    with tm.tic_toc('First Order Extraction'):
+      _ = self.extracted_image
+      _ = self._backgrounds[0].extracted_image
+    with tm.tic_toc('Aberration Correction'):
+      _ = self.corrected_phase
+    with tm.tic_toc('Phase Unwrapping'):
+      _ = self.unwrapped_phase
+    tm.report()
 
   # endregion: Analysis
 
@@ -472,17 +515,23 @@ if __name__ == '__main__':
   data_dir = r'E:\lambai\01-PR\data'
 
   trial_id = 1
-  sample_id = 2
-  # pattern = '*06-*'
-  pattern = None
+  sample_id = 1
+  pattern = '*62-*'
+  # pattern = None
   ig = PRAgent.read_interferogram(
     data_dir, trial_id, sample_id, pattern=pattern, radius=80)
   # ig = ig.rotate(10)
 
-  ig.dashow()
+  # ig = Interferogram.imread(r'E:\lambai\01-PR\data\63-Nie system\1.tif',
+  #                           radius=70)
+
+  ig.dashow(show_calibration=True)
+  # ig.analyze_time()
   # ig.analyze_windows(4)
-  # ig.show_fourier_basis(100, rs=(0.8, 1.0, 1.2))
-  # ig.show_dettol(100, angle=0, omega=30, rs=(0.3, 0.6, 0.9,), show_what='img')
+  # ig.show_fourier_basis(201, rs=(1.0,))
+
+  # rs = [1.5]
+  # ig.show_dettol(11, angle=0, omega=15, rs=rs, show_what='im')
 
 
 

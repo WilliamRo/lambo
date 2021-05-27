@@ -57,10 +57,15 @@ class DigitalImage(Nomear):
   # region: Class Methods
 
   @classmethod
-  def get_fourier_basis(cls, fi, fj, L=16, fmt='default'):
-    I, J = np.meshgrid(range(L), range(L), indexing='ij')
+  def get_fourier_basis(cls, fi, fj, L=15, fmt='default', rotundity=False):
+    """e.g., L=3, should meshgrid([-1, 0, 1])"""
+    assert L % 2 == 1
+    R = (L - 1) // 2
+    I, J = np.meshgrid(range(-R, R+1), range(-R, R+1), indexing='ij')
     basis = np.exp(-2*np.pi*1j*(fi*I+ fj*J))
-    if fmt in ('default', 'double_channel'):
+    # Make basis a round if required
+    if rotundity: basis[I**2 + J**2 > R**2] = 0
+    if fmt in ('default', 'double_channel', 'dc'):
       return np.stack([np.real(basis), np.imag(basis)], axis=-1)
     elif fmt in ('real', 'r'): return np.real(basis)
     elif fmt in ('image', 'imag', 'i'): return np.imag(basis)

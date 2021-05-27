@@ -21,6 +21,7 @@ class Tracker(DaVinci):
     locations = 'LOCATIONS'
     trajectories = 'TRAJECTORIES'
     n_frames = 'N_FRAMES'
+    show_titles = 'SHOW_TITLES'
 
 
   def __init__(self, frames, size: int = 5, **kwargs):
@@ -47,6 +48,11 @@ class Tracker(DaVinci):
     self.effective_link_config = {}
 
   # region: Properties
+
+  @property
+  def show_titles(self):
+    return self.get_from_pocket(
+      self.Keys.show_titles, initializer=lambda: False)
 
   @property
   def file_name(self):
@@ -199,7 +205,10 @@ class Tracker(DaVinci):
     tp.annotate(df, self.raw_frames[self.object_cursor], ax=self.axes)
 
     # Set title
-    title = ', '.join(['{} = {}'.format(k, v) for k, v in configs.items()])
+    title = None
+    if self.show_titles:
+      title = ', '.join(['{} = {}'.format(k, v) for k, v in configs.items()])
+      title += ' (#{})'.format(df.size)
     self.set_im_axes(title=title)
 
     return self.locations
@@ -269,6 +278,16 @@ class Tracker(DaVinci):
 
   # endregion: Analysis
 
+  # region: Builtin Commands
+
+  def set_title(self, flag: int = 1):
+    assert flag in (0, 1)
+    self.put_into_pocket(self.Keys.show_titles, flag, exclusive=False)
+    self._draw()
+  st = set_title
+
+  # endregion: Builtin Commands
+
 
 if __name__ == '__main__':
   data_dir = r'E:\lambai\10-NR\data\mar2021'
@@ -278,11 +297,12 @@ if __name__ == '__main__':
   minmass = 0.2
 
   tk = Tracker.read_by_index(data_dir, index, show_info=True)
-  # tk.n_frames = 10
+  tk.n_frames = 10
   tk.config_locate(diameter=diameter, minmass=minmass)
+  tk.config_link(search_range=10, memory=0)
 
   tk.add_plotter(tk.imshow)
-  tk.add_plotter(tk.histogram)
+  # tk.add_plotter(tk.histogram)
   tk.add_plotter(tk.show_locations)
   tk.add_plotter(lambda: tk.show_locations(show_traj=True))
   tk.show()
