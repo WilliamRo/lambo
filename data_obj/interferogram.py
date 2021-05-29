@@ -214,6 +214,7 @@ class Interferogram(DigitalImage):
       [np.real(self.extracted_image), np.imag(self.extracted_image)], axis=-1)
     elif index == 3: return np.stack(
       [np.abs(self.extracted_image), self.extracted_angle], axis=-1)
+    elif index == 9: return self.extracted_angle_unwrapped
     else: raise KeyError('!! index must be in (1, 2, 3)')
 
   def get_fourier_prior(self, L, angle=0, r=1.0, fmt='default'):
@@ -525,7 +526,7 @@ if __name__ == '__main__':
   # ig = Interferogram.imread(r'E:\lambai\01-PR\data\63-Nie system\1.tif',
   #                           radius=70)
 
-  ig.dashow(show_calibration=True)
+  # ig.dashow(show_calibration=True)
   # ig.analyze_time()
   # ig.analyze_windows(4)
   # ig.show_fourier_basis(201, rs=(1.0,))
