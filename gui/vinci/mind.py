@@ -1,4 +1,4 @@
-from lambo.abstract.noear import Nomear
+from roma import Nomear
 
 import numpy as np
 import re

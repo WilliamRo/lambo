@@ -1,7 +1,7 @@
 from matplotlib.gridspec import GridSpec
 from matplotlib import cm
 
-from lambo.abstract.noear import Nomear
+from roma import Nomear
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.mplot3d import Axes3D
 from typing import Tuple, Optional

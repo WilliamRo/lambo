@@ -11,6 +11,7 @@ from lambo.maths.geometry.misc import rotate_coord
 from lambo.maths.geometry.plane import fit_plane_adaptively
 from lambo.misc.timer import Timer
 
+from scipy import ndimage
 from skimage.restoration import unwrap_phase
 
 
@@ -20,7 +21,7 @@ class Interferogram(DigitalImage):
     fourier_prior = '_fourier_prior_'
 
   def __init__(self, img, bg=None, radius=None, lambda_0=None, delta_n=None,
-               **kwargs):
+               peak_index=None, **kwargs):
     # Call parent's initializer
     super(Interferogram, self).__init__(img, **kwargs)
 
@@ -29,10 +30,14 @@ class Interferogram(DigitalImage):
     self.lambda_0 = roma.check_type(lambda_0, float, nullable=True)
     self.delta_n = roma.check_type(delta_n, float, nullable=True)
     self._backgrounds: Optional[List[Interferogram]] = None
+    if peak_index is not None:
+      assert isinstance(peak_index, tuple) and len(peak_index) == 2
+      self.peak_index = peak_index
     if bg is not None: self.set_background(bg)
 
     self.sample_token = None
     self.setup_token = None
+    self.tag = ''
 
   # region: Properties
 
@@ -64,8 +69,8 @@ class Interferogram(DigitalImage):
     return self._backgrounds[0].img
 
   @property
-  def peak_index(self) -> tuple:
-    def _find_peak():
+  def peak_index(self) -> Tuple[int, int]:
+    def _find_peak() -> Tuple[int, int]:
       region = self.Sc
       index = np.unravel_index(np.argmax(region * self.peak_mask), region.shape)
       self._set_fourier_prior(index)
@@ -135,6 +140,26 @@ class Interferogram(DigitalImage):
                 self.size == self._backgrounds[0].size])
     return self.get_from_pocket(
       'retrieved_phase', initializer=lambda: np.angle(self.corrected_image))
+
+  @property
+  def derivative_1(self) -> np.ndarray:
+    def _calculate_grad1():
+      x = ndimage.sobel(self.extracted_angle_unwrapped, axis=0, mode='constant')
+      y = ndimage.sobel(self.extracted_angle_unwrapped, axis=1, mode='constant')
+      return np.stack([x, y], axis=-1)
+    return self.get_from_pocket('derivative_1', initializer=_calculate_grad1)
+
+  @property
+  def derivative_1_amp(self) -> np.ndarray:
+    def _calculate_grad1_amp():
+      return np.sqrt(np.sum(self.derivative_1 * self.derivative_1, axis=-1))
+    return self.get_from_pocket(
+      'derivative_1_amp', initializer=_calculate_grad1_amp)
+
+  @property
+  def aberration(self) -> np.ndarray:
+    return self.get_from_pocket('aberration', initializer=lambda: (
+        self.extracted_angle_unwrapped - self.flattened_phase))
 
   @property
   def unwrapped_phase(self) -> np.ndarray:
@@ -280,12 +305,12 @@ class Interferogram(DigitalImage):
     self._backgrounds = bgig_list
 
   @classmethod
-  def imread(cls, path, bg_path=None, radius=None, **kwargs):
+  def imread(cls, path, bg_path=None, radius=None, peak_index=None, **kwargs):
     img = super().imread(path, return_array=True)
     bg = super().imread(bg_path, return_array=True) if bg_path else None
-    return Interferogram(img, bg, radius)
+    return Interferogram(img, bg, radius, peak_index=peak_index)
 
-  def dashow(self, size=7, show_calibration=True):
+  def dashow(self, size=7, show_calibration=True, show_grad1=False):
     if self._backgrounds is None: show_calibration = False
 
     da = DaVinci('Interferogram Analyzer', size, size)
@@ -306,6 +331,15 @@ class Interferogram(DigitalImage):
     da.add_imshow_plotter(self.extracted_angle, 'Extracted Angle')
     da.add_imshow_plotter(
       self.extracted_angle_unwrapped, 'Extracted Angle (unwrapped)')
+    if show_grad1:
+      # da.add_plotter(lambda ax: da.histogram(self.derivative_1_amp, ax))
+
+      grad1 = self.derivative_1_amp
+      grad1 = np.log(grad1 + 1)
+      # grad1 = np.minimum(grad1, 25)
+      da.add_imshow_plotter(grad1, '|1st Order Gradient|', color_bar=True)
+      da.add_imshow_plotter(self.flattened_phase, 'Flattened Phase',
+                            color_bar=True)
 
     if show_calibration:
       da.add_imshow_plotter(
@@ -516,9 +550,9 @@ if __name__ == '__main__':
   data_dir = r'E:\lambai\01-PR\data'
 
   trial_id = 1
-  sample_id = 1
-  pattern = '*62-*'
-  # pattern = None
+  sample_id = 2
+  # pattern = '*62-*'
+  pattern = None
   ig = PRAgent.read_interferogram(
     data_dir, trial_id, sample_id, pattern=pattern, radius=80)
   # ig = ig.rotate(10)
@@ -526,7 +560,7 @@ if __name__ == '__main__':
   # ig = Interferogram.imread(r'E:\lambai\01-PR\data\63-Nie system\1.tif',
   #                           radius=70)
 
-  # ig.dashow(show_calibration=True)
+  ig.dashow(show_calibration=False, show_grad1=True)
   # ig.analyze_time()
   # ig.analyze_windows(4)
   # ig.show_fourier_basis(201, rs=(1.0,))

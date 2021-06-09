@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import os
 
-from lambo.abstract.noear import Nomear
 from lambo.gui.pyplt import imshow
+from roma import Nomear
 
 from skimage.transform import rotate
 
