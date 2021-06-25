@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import roma
 
+from collections import OrderedDict
 from typing import Optional, Union, List, Tuple
 from lambo.data_obj.image import DigitalImage
 from lambo.gui.pyplt import imshow
@@ -19,9 +20,10 @@ class Interferogram(DigitalImage):
 
   class Keys(object):
     fourier_prior = '_fourier_prior_'
+    file_path = '_file_path_'
 
-  def __init__(self, img, bg=None, radius=None, lambda_0=None, delta_n=None,
-               peak_index=None, **kwargs):
+  def __init__(self, img, bg_array=None, radius=None, lambda_0=None,
+               delta_n=None, peak_index=None, **kwargs):
     # Call parent's initializer
     super(Interferogram, self).__init__(img, **kwargs)
 
@@ -30,16 +32,33 @@ class Interferogram(DigitalImage):
     self.lambda_0 = roma.check_type(lambda_0, float, nullable=True)
     self.delta_n = roma.check_type(delta_n, float, nullable=True)
     self._backgrounds: Optional[List[Interferogram]] = None
-    if peak_index is not None:
-      assert isinstance(peak_index, tuple) and len(peak_index) == 2
-      self.peak_index = peak_index
-    if bg is not None: self.set_background(bg)
 
+    # Set peak index if provided
+    self._peak_index: Optional[Tuple[int, int]] = None
+    if peak_index is not None: self.peak_index = peak_index
+
+    # Set background if provided
+    if bg_array is not None: self.set_background(bg_array)
+
+    # Other field (should be cloned)
     self.sample_token = None
     self.setup_token = None
     self.tag = ''
 
   # region: Properties
+
+  @property
+  def clone(self):
+    bg_array = None
+    if self.default_background is not None: bg_array = self.bg_array
+    ig = Interferogram(self.img, radius=self.radius, peak_index=self.peak_index,
+                       bg_array=bg_array)
+
+    # Clone other fields
+    ig.sample_token = self.sample_token
+    ig.setup_token = self.setup_token
+    ig.tag = self.tag
+    return ig
 
   @property
   def fourier_prior(self) -> Tuple[float, float]:
@@ -65,22 +84,30 @@ class Interferogram(DigitalImage):
     return np.log(self.Sc + 1)
 
   @property
+  def default_background(self):
+    if isinstance(self._backgrounds, list): return self._backgrounds[0]
+    return None
+
+  @property
   def bg_array(self) -> np.ndarray:
-    return self._backgrounds[0].img
+    return self.default_background.img
 
   @property
   def peak_index(self) -> Tuple[int, int]:
+    """Peak index should be localized since this variable takes no space"""
     def _find_peak() -> Tuple[int, int]:
       region = self.Sc
       index = np.unravel_index(np.argmax(region * self.peak_mask), region.shape)
       self._set_fourier_prior(index)
       return index
-    return self.get_from_pocket('index_of_+1_point', initializer=_find_peak)
+
+    if self._peak_index is None: self._peak_index = _find_peak()
+    return self._peak_index
 
   @peak_index.setter
   def peak_index(self, val):
-    self.put_into_pocket(
-      'index_of_+1_point', roma.check_type(val, inner_type=int))
+    assert isinstance(val, tuple) and len(val) == 2
+    self._peak_index = roma.check_type(val, inner_type=int)
 
   @property
   def mask(self) -> np.ndarray:
@@ -242,12 +269,42 @@ class Interferogram(DigitalImage):
     elif index == 9: return self.extracted_angle_unwrapped
     else: raise KeyError('!! index must be in (1, 2, 3)')
 
-  def get_fourier_prior(self, L, angle=0, r=1.0, fmt='default'):
+  def get_fourier_prior(self, L, angle=0, r=1.0, fmt='default',
+                        rotundity=False):
     # Get location of +1 point
     loc = self.fourier_prior
     if angle != 0: loc = rotate_coord(loc, angle)
     if r != 1.0: loc = [r * l for l in loc]
-    return self.get_fourier_basis(*loc, L, fmt=fmt)
+    return self.get_fourier_basis(*loc, L, fmt=fmt, rotundity=rotundity)
+
+  def get_fourier_dual_basis(
+      self, L, omega=30, rs=(0.3, 0.6, 0.9), return_dict=False, rotundity=True,
+      angle=0):
+    #
+    base_dict = OrderedDict()
+
+    def gather(coord, a, r):
+      assert len(coord) == 2
+      comp = self.get_fourier_basis(coord[0], coord[1], L=L, fmt='comp',
+                                    rotundity=rotundity)
+      base_dict[(a, r)] = comp
+
+    # Initialize with center component
+    loc = self.fourier_prior
+    if angle != 0: loc = rotate_coord(loc, angle)
+    gather(loc, 0, 0)
+
+    # Rotate loc around +1 point and gather corresponding basis
+    uv = self._get_unit_vector(loc)
+    for a in range(0, 180, omega):
+      _uv = rotate_coord(uv, a)
+      for r in rs:
+        assert 0 < r <= 1
+        gather(loc + r * _uv, a, r)
+
+    # Return accordingly
+    if return_dict: return base_dict
+    return list(base_dict.values())
 
   def get_fourier_prior_stack(
       self, L, angle, omega=30, rs=(0.3, 0.6, 0.9), fmt='real'):
@@ -308,7 +365,13 @@ class Interferogram(DigitalImage):
   def imread(cls, path, bg_path=None, radius=None, peak_index=None, **kwargs):
     img = super().imread(path, return_array=True)
     bg = super().imread(bg_path, return_array=True) if bg_path else None
-    return Interferogram(img, bg, radius, peak_index=peak_index)
+    ig = Interferogram(img, bg, radius, peak_index=peak_index)
+    # Set filename to interferogram
+    ig.put_into_pocket(cls.Keys.file_path, path, local=True)
+    if bg_path is not None:
+      ig.default_background.put_into_pocket(
+        cls.Keys.file_path, bg_path, local=True)
+    return ig
 
   def dashow(self, size=7, show_calibration=True, show_grad1=False):
     if self._backgrounds is None: show_calibration = False
@@ -358,6 +421,24 @@ class Interferogram(DigitalImage):
 
   def set_flatten_configs(self, **configs):
     self.put_into_pocket('flatten_configs', configs)
+
+  def dual_conv(self, kernel: np.ndarray, mu=0, sigma=1) -> np.ndarray:
+    from scipy import signal
+
+    if mu is None: mu =  np.mean(self.img)
+    im = (self.img - mu) / sigma
+
+    # Sanity check
+    assert np.max(np.abs(kernel)) <= 1.0
+
+    # Produce dual kernel
+    dual = np.sqrt(1 - np.square(kernel))
+
+    y1 = signal.convolve2d(im, kernel)
+    y2 = signal.convolve2d(im, dual)
+    y = np.sqrt(np.square(y1), np.square(y2))
+
+    return y
 
   # endregion: Public Methods
 
@@ -490,7 +571,7 @@ class Interferogram(DigitalImage):
     # Show images
     imshow(*images, titles=titles, max_cols=2)
 
-  def show_fourier_basis(self, L=50, angles=0, rs=1.0):
+  def show_fourier_basis(self, L=50, angles=0, rs=1.0, include_imag=False):
     if isinstance(angles, int): angles = (angles,)
     if isinstance(rs, (int, float)): rs = (rs,)
 
@@ -499,8 +580,10 @@ class Interferogram(DigitalImage):
       im = self.img
       im = self.get_downtown_area(self.rotate_image(im, a))
       da.objects.append(im[:L, :L])
-      for r in rs: da.objects.append(
-        self.get_fourier_prior(L, a, r, fmt='real'))
+      for r in rs:
+        da.objects.append(self.get_fourier_prior(L, a, r, fmt='real'))
+        if include_imag: da.objects.append(
+          self.get_fourier_prior(L, a, r, fmt='image'))
     da.add_plotter(da.imshow)
     da.show()
 
@@ -525,6 +608,36 @@ class Interferogram(DigitalImage):
 
     assert show_what in ('basis', 'img', 'im')
     da.objects = basis
+    da.show()
+
+  def analyze_dual_conv(self, L, omega=30, rs=(0.3, 0.6, 0.9), merge=False,
+                        rotundity=True, show_kernel=True, preprocess=True):
+    from roma import console
+
+    base_dict = self.get_fourier_dual_basis(
+      L, omega, rs, return_dict=True, rotundity=rotundity)
+
+    da = DaVinci('Dual Conv Analysis', init_as_image_viewer=True)
+
+    # Add all
+    if merge: base_dict[(-1, -1)] = np.sum(
+      [np.real(b) for _, b in base_dict.items()], axis=0)
+
+    if not show_kernel: da.add_image(self.img, 'Raw Interferogram')
+
+    total = len(base_dict)
+    for i, ((a, r), b) in enumerate(base_dict.items()):
+      console.print_progress(i, total)
+
+      knl = np.real(b)
+      if show_kernel: im = np.real(knl)
+      else: im = self.dual_conv(knl, mu=None if preprocess else 0)
+      da.add_image(im, 'a={}, r={}'.format(a, r))
+
+    if not show_kernel: da.add_image(self.flattened_phase, 'Flattened Phase')
+
+    console.show_status('Images set to Da Vinci.')
+    da.toggle_log()
     da.show()
 
   def analyze_time(self):
@@ -560,12 +673,14 @@ if __name__ == '__main__':
   # ig = Interferogram.imread(r'E:\lambai\01-PR\data\63-Nie system\1.tif',
   #                           radius=70)
 
-  ig.dashow(show_calibration=False, show_grad1=True)
+  # ig.dashow(show_calibration=False, show_grad1=True)
   # ig.analyze_time()
   # ig.analyze_windows(4)
-  # ig.show_fourier_basis(201, rs=(1.0,))
+  # ig.show_fourier_basis(21, rs=(1.0,), angles=(5, 10))
+  ig.analyze_dual_conv(21, omega=45, rs=(0.3, 0.6), rotundity=False,
+                       show_kernel=False, preprocess=True)
 
-  # rs = [1.5]
+  # rs = [1]
   # ig.show_dettol(11, angle=0, omega=15, rs=rs, show_what='im')
 
 

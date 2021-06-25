@@ -1,3 +1,4 @@
+from roma import console
 from roma import Nomear
 
 import numpy as np
@@ -18,12 +19,12 @@ class Mind(Nomear):
     cmd_string, func_key, args, kwargs = cmd
 
     # Add cmd_string to history buffer anyway
-    self.command_history.append(cmd_string)
+    self.command_history.insert(0, cmd_string)
 
     # Get method
     func = getattr(self, func_key, None)
     if not callable(func):
-      print(' ! command `{}` not found.'.format(func_key))
+      self._err(' ! command `{}` not found.'.format(func_key))
       return
 
     # Try to execute func
@@ -43,11 +44,11 @@ class Mind(Nomear):
       # Execute
       func(*args, **kwargs)
     except Exception as e:
-      print(' ! Failed to execute command `{}`'.format(cmd_string))
-      print('.. Error Message:')
-      print('- ' * 39)
-      print(e)
-      print('- ' * 39)
+      self._err(' ! Failed to execute command `{}`'.format(cmd_string))
+      self._err('.. Error Message:')
+      self._err('- ' * 39)
+      self._err(str(e))
+      self._err('- ' * 39)
 
 
   @staticmethod
@@ -74,9 +75,14 @@ class Mind(Nomear):
 
     # Check and return
     if not flag:
-      print(' ! `{}` is not an appropriate command'.format(s))
+      Mind._err(' ! `{}` is not an appropriate command'.format(s))
       return None
     return s, func_key, args, kwargs
+
+
+  @staticmethod
+  def _err(text):
+    console.write_line(text, color='red')
 
 
 if __name__ == '__main__':

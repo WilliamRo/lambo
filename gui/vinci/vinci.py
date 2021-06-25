@@ -14,15 +14,28 @@ class DaVinci(Board, Mind):
 
     # Finalize the initiation
     self._register_events_for_cursors()
-    self._activate_mind()
+    self._register_events_for_switches()
 
-    if init_as_image_viewer: self.add_plotter(self.imshow)
+    self._activate_mind()
+    if init_as_image_viewer: self.add_plotter(self.imshow_pro)
 
   # region: Properties
 
   # endregion: Properties
 
   # region: Private Methods
+
+  def _toggle_color_bar(self):
+    self._color_bar = not self._color_bar
+    self._draw()
+
+  def _toggle_display_spectrum(self):
+    self._k_space = not self._k_space
+    self._draw()
+
+  def _register_events_for_switches(self):
+    self.state_machine.register_key_event('C', self._toggle_color_bar)
+    self.state_machine.register_key_event('F', self._toggle_display_spectrum)
 
   def _register_events_for_cursors(self):
 
@@ -47,11 +60,33 @@ class DaVinci(Board, Mind):
     self.state_machine.register_key_event('h', layer_backward)
     self.state_machine.register_key_event('up', layer_backward)
 
+    # Register events for bookmark
+    for n in range(1, 10):
+      self.state_machine.register_key_event(
+        'ctrl+{}'.format(n), lambda n=n: self.set_bookmark(n))
+      self.state_machine.register_key_event(
+        str(n), lambda n=n: self.jump_back_and_forth(n))
+
   def _activate_mind(self):
     if self.backend_is_TkAgg:
       self.state_machine.register_key_event(':', self.sense)
 
   # endregion: Private Methods
+
+  # region: Build-in Commands
+
+  def set_z_lim(self, zmin: float, zmax: float):
+    assert zmin < zmax
+    self.z_lim_tuple = (zmin, zmax)
+    self._draw()
+  zlim = set_z_lim
+
+  def toggle_log(self):
+    self._k_space_log = not self._k_space_log
+    self._draw()
+  log = tl = toggle_log
+
+  # endregion: Build-in Commands
 
   # region: Public Methods
 
@@ -67,10 +102,11 @@ class DaVinci(Board, Mind):
   @staticmethod
   def draw(images: list, titles=None, flatten=False):
     assert not flatten
-    dv = DaVinci()
-    dv.objects = images
-    dv.add_plotter(dv.imshow)
-    dv.show()
+    da = DaVinci()
+    da.objects = images
+    da.object_titles = [] if titles is None else titles
+    da.add_plotter(da.imshow)
+    da.show()
 
   # endregion: Public Static Methods
 

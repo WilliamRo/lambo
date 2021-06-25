@@ -54,11 +54,14 @@ class StateMachine(object):
       plt.close()
     elif key == 'ctrl+enter':
       self.board.window.state('zoomed')
-    else: print('>> key "{}" pressed'.format(key))
+    elif key not in ('control', 'alt', 'shift'):
+      # Ignore modifiers
+      print('>> key "{}" pressed'.format(key))
 
     # Things should be done inside each branch, such as refresh
 
   def _get_kwargs_for_event(self, method):
+    # TODO: raise error if default value is not provided
     assert callable(method)
     # Get method signature
     sig = inspect.signature(method).parameters
@@ -69,7 +72,7 @@ class StateMachine(object):
         kwargs[kw] = self
       elif kw in ('board', 'da_vinci', 'vinci'):
         kwargs[kw] = self.board
-      else: raise KeyError('!! Illegal argument name `{}`'.format(kw))
+      # else: raise KeyError('!! Illegal argument name `{}`'.format(kw))
     return kwargs
 
   # endregion: Private Methods

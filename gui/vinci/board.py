@@ -1,7 +1,7 @@
 from matplotlib.gridspec import GridSpec
 from matplotlib import cm
 
-from roma import Nomear
+from roma import console, Nomear
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.mplot3d import Axes3D
 from typing import Tuple, Optional
@@ -26,8 +26,12 @@ class Board(Nomear):
     figure = 'FIGURE'
     axes = 'AXES'
     axes3d = 'AXES3D'
+    selected_rect = 'SELECTED_RECT'
 
   def __init__(self, title=None, height=5, width=5):
+    # Set matploblib backend
+    matplotlib.use('TkAgg')
+
     self.objects = []
     self.object_titles = []
     self.layer_plotters = []
@@ -35,15 +39,26 @@ class Board(Nomear):
     self._object_cursor = 0
     self._layer_cursor = 0
 
+    # Attributes for bookmarks logic
+    self.bookmarks = {}
+    self._last_layer_cursor = 0
+    self._last_obj_cursor = 0
+
     # Other attributes
     self.title = title
     self.fig_height = height
     self.fig_width = width
 
+    # 2D options
+    self._color_bar = False
+    self._k_space = False
+    self._k_space_log = False
+    self._color_limits = [None, None]
+
     # 3D options
     self.keep_3D_view_angle = False
     self.view_angle = None
-    self.z_lim: Optional[Tuple[float, float]] = None
+    self.z_lim_tuple: Optional[Tuple[float, float]] = None
 
   # region: Properties
 
@@ -140,41 +155,45 @@ class Board(Nomear):
     # Clear all
     self._clear()
 
-    # Set windows title
-    self.canvas.set_window_title(self.win_title)
     # Get arguments for current plotter
     kwargs = self._get_kwargs_for_plotter(self.current_plotter)
 
     # Plot
     self.current_plotter(**kwargs)
 
+    # Set windows title
+    self.canvas.set_window_title(self.win_title)
+
     # Set view angle if necessary
     if self.current_plotter_is_3D:
       if self.keep_3D_view_angle and self.view_angle is not None:
         self.axes3d.view_init(*self.view_angle)
-      if self.z_lim is not None:
-        assert len(self.z_lim) == 2
-        self.axes3d.set_zlim3d(*self.z_lim)
+      if self.z_lim_tuple is not None:
+        assert len(self.z_lim_tuple) == 2
+        self.axes3d.set_zlim3d(*self.z_lim_tuple)
 
     # Tight layout and refresh
     plt.tight_layout()
 
     # Refresh
-    self.canvas.draw()
+    self._internal_refresh()
 
   def _clear(self):
     # Clear 2D axes
-    if self.Keys.axes in self._pocket:
-      self._pocket.pop(self.Keys.axes)
+    if self.Keys.axes in self._cloud_pocket:
+      self._cloud_pocket.pop(self.Keys.axes)
 
     # Clear 3D axes
-    if self.Keys.axes3d in self._pocket:
+    if self.Keys.axes3d in self._cloud_pocket:
       if self.keep_3D_view_angle:
         self.view_angle = (self.axes3d.elev, self.axes3d.azim)
-      self._pocket.pop(self.Keys.axes3d)
+      self._cloud_pocket.pop(self.Keys.axes3d)
 
     # Clear figure
     self.figure.clear()
+
+  def _internal_refresh(self):
+    self.canvas.draw()
 
   def _get_kwargs_for_plotter(self, plotter):
     assert callable(plotter)
@@ -193,6 +212,12 @@ class Board(Nomear):
         kwargs[kw] = self.axes
       elif kw in ('axes3d', 'ax3d'):
         kwargs[kw] = self.axes3d
+      elif kw in ('k_space', 'k'):
+        kwargs[kw] = self._k_space
+      elif kw in ('color_bar', 'cb'):
+        kwargs[kw] = self._color_bar
+      elif kw in ('log', 'tl'):
+        kwargs[kw] = self._k_space_log
       elif kw in ('title', 'im_title'):
         if len(self.object_titles) == len(self.objects):
           kwargs[kw] = self.object_titles[self.object_cursor]
@@ -206,6 +231,45 @@ class Board(Nomear):
   # endregion: Private Methods
 
   # region: Public Methods
+
+  # region: Bookmark Logic
+
+  def _determine_list(self, n):
+    """1-5 for layers, 6-0 for objects"""
+    assert isinstance(n, int) and 0 <= n <= 9
+    if len(self.objects) <= 1 and len(self.layer_plotters) <= 1: return None
+    if len(self.objects) <= 1: return self.layer_plotters
+    if len(self.layer_plotters) <= 1: return self.objects
+    return self.layer_plotters if 1 <= n <= 5 else self.objects
+
+  def set_bookmark(self, n):
+    assert isinstance(n, int) and 0 <= n <= 9
+    channel = self._determine_list(n)
+    if channel is None: return
+    elif channel is self.layer_plotters:
+      cursor, key = self.layer_cursor, 'plotter'
+    else: cursor, key = self.object_cursor, 'object'
+
+    self.bookmarks[n] = cursor
+    console.show_status('Bookmark[{}] set on {}[{}]'.format(
+      n, key, self.layer_cursor + 1))
+
+  def jump_back_and_forth(self, n):
+    if n not in self.bookmarks: return
+    if self._determine_list(n) is self.layer_plotters:
+      if self.layer_cursor != self.bookmarks[n]:
+        self._last_layer_cursor = self.layer_cursor
+        self.layer_cursor = self.bookmarks[n]
+      else: self.layer_cursor = self._last_layer_cursor
+    else:
+      if self.object_cursor != self.bookmarks[n]:
+        self._last_obj_cursor = self.object_cursor
+        self.object_cursor = self.bookmarks[n]
+      else: self.object_cursor = self._last_obj_cursor
+
+  # endregion: Bookmark Logic
+
+  def refresh(self): self._draw()
 
   def move_to(self, x:int, y:int):
     """Move figure's upper left corner to pixel (x, y)
@@ -232,10 +296,10 @@ class Board(Nomear):
     if index == -1: index = len(self.layer_plotters)
     self.layer_plotters.insert(index, method)
 
-  def add_imshow_plotter(
-      self, image, title=None, finalize=None, color_bar=False):
-    def plotter(ax: plt.Axes):
-      self.imshow(image, ax, title=title, color_bar=color_bar)
+  def add_imshow_plotter(self, image, title=None, finalize=None):
+    def plotter(ax: plt.Axes, color_bar: bool, k_space: bool, log: bool):
+      self.imshow(
+        image, ax, title=title, color_bar=color_bar, k_space=k_space, log=log)
       if callable(finalize): finalize()
     self.add_plotter(plotter)
 
@@ -268,18 +332,36 @@ class Board(Nomear):
     ax.text(0.5, 0.5, text, ha='center', va='center')
     ax.set_axis_off()
 
+  def imshow_pro(
+      self, x: np.ndarray, title=None, cmap=None, norm=None, aspect=None,
+      interpolation=None, alpha=None):
+    self.imshow(x=x, ax=self.axes, title=title, cmap=cmap, norm=norm,
+                aspect=aspect, interpolation=interpolation, alpha=alpha,
+                vmin=self._color_limits[0], vmax=self._color_limits[1],
+                color_bar=self._color_bar, k_space=self._k_space,
+                log=self._k_space_log,
+                rect=self.get_from_pocket(self.Keys.selected_rect))
+
   @staticmethod
   def imshow(x: np.ndarray, ax: plt.Axes = None, title=None, cmap=None,
              norm=None, aspect=None, interpolation=None, alpha=None,
-             vmin=None, vmax=None, color_bar=False):
+             vmin=None, vmax=None, color_bar=False, k_space=False, log=False,
+             rect=None):
     # Get current axes if ax is not provided
     if ax is None: ax = plt.gca()
     # Clear axes before drawing
     ax.cla()
+
+    # Calculate spectrum density if necessary
+    if k_space:
+      x = np.abs(np.fft.fftshift(np.fft.fft2(x)))
+      if log: x = np.log(x)
+
     # Show images
     im = ax.imshow(
       x, cmap=cmap, norm=norm, aspect=aspect, interpolation=interpolation,
       alpha=alpha, vmin=vmin, vmax=vmax)
+    im.set_clim(vmin, vmax)
 
     # Set color bar if required
     if color_bar:
@@ -290,6 +372,13 @@ class Board(Nomear):
     # Set title if provided
     if title: ax.set_title(title)
     ax.set_axis_off()
+
+    # Zoom-in to rect if provided
+    if rect is not None:
+      Y, X = x.shape
+      xlim, ylim = rect
+      ax.set_xlim(*[l * X for l in xlim])
+      ax.set_ylim(*[l * Y for l in ylim])
 
   @staticmethod
   def scatter(X, Y, Z, ax3d: Axes3D, **kwargs):
@@ -316,6 +405,10 @@ class Board(Nomear):
 
   # region: Build-in Commands
 
+  def show_status(self, text: str):
+    self.show_text(self.axes, text)
+    self._internal_refresh()
+
   def poi(self):
     """Print Object Information"""
     if not self.objects:
@@ -329,6 +422,94 @@ class Board(Nomear):
 
   def slc(self, n: int): self.layer_cursor = n - 1
   def soc(self, n: int): self.object_cursor = n - 1
+
+  def set_clim(self, vmin: float = None, vmax: float = None):
+    self._color_limits = [vmin, vmax]
+    self._draw()
+  clim = set_clim
+
+  def toggle_freeze_zoom_in(self):
+    """Works only for 2-D plot"""
+    # Try to get rect info from pocket
+    rect = self.get_from_pocket(self.Keys.selected_rect)
+    # Get full size
+    X, Y = [abs(se[1] - se[0]) for se in self.axes.images[0].sticky_edges[:2]]
+    # Get relative x/y lim
+    xlim, ylim = self.axes.get_xlim(), self.axes.get_ylim()
+    lims = ((xlim[0] / X, xlim[1] / X), (ylim[0] / Y, ylim[1] / Y))
+
+    if rect == lims:
+      self.replace_stuff(self.Keys.selected_rect, None)
+      console.show_status('Freeze-zoom-in function has been turned off.')
+    else:
+      self.put_into_pocket(self.Keys.selected_rect, lims, False)
+      console.show_status(
+        'Zoom-in rect fixed to x:({:.1f}, {:.1f}), y:({:.1f}, {:.1f})'.format(
+          *xlim, *ylim))
+  fzi = toggle_freeze_zoom_in
+
+  def export(self, which: str = None, fps: float = 2, cursor_range: str = None,
+             fmt: str = 'gif', path: str = None, n_tail: int = 0):
+    """If `fmt` is `mp4`, ffmpeg must be installed.
+     Official instruction for windows system:
+       https://www.wikihow.com/Install-FFmpeg-on-Windows
+    """
+    from roma import console
+    import matplotlib.animation as animation
+    import re
+
+    # Set function
+    if which in (None, '-', '*'):
+      # Try to set _func automatically, not recommended
+      which = 'o' if len(self.objects) > len(self.layer_plotters) else 'l'
+    if which not in ('l', 'o'):
+      raise ValueError('!! First parameter must be `o` or `l`')
+    _func = self.slc if which == 'l' else self.soc
+
+    # Find cursor range
+    if cursor_range is None:
+      begin, end = 1, len(self.layer_plotters if which == 'l' else self.objects)
+    else:
+      if re.match('^\d+:\d+$', cursor_range) is None:
+        raise ValueError('!! Illegal cursor range `{}`'.format(cursor_range))
+      begin, end = [int(n) for n in cursor_range.split(':')]
+
+    end += 1
+
+    # Find path
+    if fmt not in ('gif', 'mp4'):
+      raise KeyError('!! `fmt` should be `gif` or `mp4`')
+    if path is None:
+      from tkinter import filedialog
+      path = filedialog.asksaveasfilename()
+    if re.match('.*\.{}$'.format(fmt), path) is None:
+      path += '.{}'.format(fmt)
+
+    # Find movie writer
+    writer = animation.FFMpegWriter(fps=fps)
+
+    # Create animation
+    tgt = 'objects' if which == 'o' else 'layers'
+    frames = list(range(begin, end))
+
+    # TODO: directly export mp4 file will lose last few frames. Use this code
+    #       block to circumvent this issue temporarily
+    if fmt == 'mp4' and n_tail > 0:
+      frames.extend([frames[-1] for _ in range(n_tail)])
+
+    console.show_status(
+      'Saving animation ({}[{}:{}]) ...'.format(tgt, frames[0], frames[-1]))
+    def func(n):
+      console.print_progress(n - begin, total=end - begin)
+      _func(n)
+
+    # This line is important when this Board is not shown
+    self._draw()
+
+    ani = animation.FuncAnimation(
+      self.figure, func, frames=frames, interval=1000 / fps)
+    ani.save(path, writer=writer)
+    console.show_status('Animation saved to `{}`.'.format(path))
 
   # endregion: Build-in Commands
 
