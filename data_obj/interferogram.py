@@ -61,7 +61,7 @@ class Interferogram(DigitalImage):
     return ig
 
   @property
-  def fourier_prior(self) -> Tuple[float, float]:
+  def fourier_prior(self) -> np.ndarray:
     if not hasattr(self, self.Keys.fourier_prior):
       self._set_fourier_prior(self.peak_index)
     return getattr(self, self.Keys.fourier_prior)
@@ -248,7 +248,7 @@ class Interferogram(DigitalImage):
     setattr(self, self.Keys.fourier_prior, np.array([i / H, j / W]))
 
   def _get_unit_vector(self, v: Optional[np.ndarray] = None):
-    """Used for get the (omaga=0, r=1.0) vector for generating
+    """Used to get the (omaga=0, r=1.0) vector for generating
        fourier basis stack"""
     assert self.radius > 0
     if v is None: v = self.fourier_prior
@@ -278,9 +278,13 @@ class Interferogram(DigitalImage):
     return self.get_fourier_basis(*loc, L, fmt=fmt, rotundity=rotundity)
 
   def get_fourier_dual_basis(
-      self, L, omega=30, rs=(0.3, 0.6, 0.9), return_dict=False, rotundity=True,
-      angle=0):
-    #
+      self, L=None, omega=30, rs=(0.3, 0.6, 0.9), return_dict=False, rotundity=True,
+      angle=0, max_angle=360, peak_and_uv=False, include_origin=False):
+    # TODO: BETA
+    if peak_and_uv:
+      return np.stack([self.fourier_prior, self._get_unit_vector()])
+
+    # Init an empty dict to fill
     base_dict = OrderedDict()
 
     def gather(coord, a, r):
@@ -292,11 +296,12 @@ class Interferogram(DigitalImage):
     # Initialize with center component
     loc = self.fourier_prior
     if angle != 0: loc = rotate_coord(loc, angle)
-    gather(loc, 0, 0)
+
+    if include_origin: gather(loc, 0, 0)
 
     # Rotate loc around +1 point and gather corresponding basis
     uv = self._get_unit_vector(loc)
-    for a in range(0, 180, omega):
+    for a in range(0, max_angle, omega):
       _uv = rotate_coord(uv, a)
       for r in rs:
         assert 0 < r <= 1
@@ -394,15 +399,15 @@ class Interferogram(DigitalImage):
     da.add_imshow_plotter(self.extracted_angle, 'Extracted Angle')
     da.add_imshow_plotter(
       self.extracted_angle_unwrapped, 'Extracted Angle (unwrapped)')
+
     if show_grad1:
       # da.add_plotter(lambda ax: da.histogram(self.derivative_1_amp, ax))
 
       grad1 = self.derivative_1_amp
       grad1 = np.log(grad1 + 1)
       # grad1 = np.minimum(grad1, 25)
-      da.add_imshow_plotter(grad1, '|1st Order Gradient|', color_bar=True)
-      da.add_imshow_plotter(self.flattened_phase, 'Flattened Phase',
-                            color_bar=True)
+      da.add_imshow_plotter(grad1, '|1st Order Gradient|')
+      da.add_imshow_plotter(self.flattened_phase, 'Flattened Phase')
 
     if show_calibration:
       da.add_imshow_plotter(
@@ -412,11 +417,14 @@ class Interferogram(DigitalImage):
         'Background Angle (unwrapped)')
       # da.add_imshow_plotter(self.corrected_intensity, 'Corrected Intensity')
       da.add_imshow_plotter(self.corrected_phase, 'Calibrated Phase')
-      da.add_imshow_plotter(self.unwrapped_phase, 'Unwrapped Phase',
-                            color_bar=True)
+      da.add_imshow_plotter(self.unwrapped_phase, 'Unwrapped Phase')
       roma.console.show_status('Fitting background plane ...')
-      da.add_imshow_plotter(self.flattened_phase, 'Flattened Phase',
-                            color_bar=True)
+      da.add_imshow_plotter(self.flattened_phase, 'Flattened Phase')
+
+      def _plot_3d(ax3d):
+        da.plot3d(self.flattened_phase, ax3d, title='Flattened Phase (3D)')
+      da.add_plotter(_plot_3d)
+
     da.show()
 
   def set_flatten_configs(self, **configs):
@@ -677,8 +685,8 @@ if __name__ == '__main__':
   # ig.analyze_time()
   # ig.analyze_windows(4)
   # ig.show_fourier_basis(21, rs=(1.0,), angles=(5, 10))
-  ig.analyze_dual_conv(21, omega=45, rs=(0.3, 0.6), rotundity=False,
-                       show_kernel=False, preprocess=True)
+  # ig.analyze_dual_conv(17, omega=45, rs=(0.4,), rotundity=True,
+  #                      show_kernel=False, preprocess=True)
 
   # rs = [1]
   # ig.show_dettol(11, angle=0, omega=15, rs=rs, show_what='im')

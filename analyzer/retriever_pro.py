@@ -61,7 +61,7 @@ class RetrieverPro(Retriever):
       if k_space: y = np.log(np.abs(np.fft.fftshift(np.fft.fft2(y))))
       return y
 
-    title = '{}(Local Match)-lv{}-a{}-r{}-ks{}]'.format(
+    title = '{}(Local Match)-lv{}-a{}-r{:.2f}-ks{}]'.format(
       fmt, level, angle, r, kernel_size)
     if round_kernel: title += '(round kernel)'
     if k_space: title += ' in K-Space'
@@ -83,15 +83,20 @@ if __name__ == '__main__':
   # r.plot_extracted_image()
   crop = 250
 
+  rs = (0.5, )
+  rs = np.linspace(0.01, 0.99, 50)
+  Ls = (25,)
+  # Ls = list(range(3, 50, 2))
   r.show_dual_conv(
-    Ls=(21,),
-    omega=30,
-    rs=(0.6,),
+    Ls=Ls,
+    omega=999,
+    rs=rs,
     crop=250,
-    rotundity=False,
+    rotundity=True,
     show_sum=False,
     show_real_imag=False,
     show_extracted=False,
+    include_origin=False,
     # combinations=(((0, 30), (0.6,)),),
   )
 

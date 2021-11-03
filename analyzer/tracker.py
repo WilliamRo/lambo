@@ -235,7 +235,7 @@ class Tracker(DaVinci):
         self.show_text(self.axes, 'Calculating {}/{} ...'.format(
           frame_no, self.n_frames))
         self.canvas.draw()
-      console.print_progress(frame_no, self.n_frames, start_time=tic)
+      console.print_progress(frame_no, self.n_frames)
       return features
 
     self.locations = tp.batch(
@@ -293,16 +293,16 @@ if __name__ == '__main__':
   data_dir = r'E:\lambai\10-NR\data\mar2021'
 
   index = 2
-  diameter = 7
-  minmass = 0.2
+  diameter = 19
+  minmass = 0.9
 
   tk = Tracker.read_by_index(data_dir, index, show_info=True)
-  tk.n_frames = 10
+  # tk.n_frames = 10
   tk.config_locate(diameter=diameter, minmass=minmass)
-  tk.config_link(search_range=10, memory=0)
+  # tk.config_link(search_range=10, memory=0)
 
   tk.add_plotter(tk.imshow)
   # tk.add_plotter(tk.histogram)
   tk.add_plotter(tk.show_locations)
-  tk.add_plotter(lambda: tk.show_locations(show_traj=True))
+  # tk.add_plotter(lambda: tk.show_locations(show_traj=True))
   tk.show()

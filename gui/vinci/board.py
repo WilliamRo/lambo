@@ -32,9 +32,9 @@ class Board(Nomear):
     # Set matploblib backend
     matplotlib.use('TkAgg')
 
-    self.objects = []
-    self.object_titles = []
-    self.layer_plotters = []
+    self.objects: list = []
+    self.object_titles: list = []
+    self.layer_plotters: list = []
 
     self._object_cursor = 0
     self._layer_cursor = 0
@@ -54,6 +54,7 @@ class Board(Nomear):
     self._k_space = False
     self._k_space_log = False
     self._color_limits = [None, None]
+    self._cmap = None
 
     # 3D options
     self.keep_3D_view_angle = False
@@ -335,11 +336,11 @@ class Board(Nomear):
   def imshow_pro(
       self, x: np.ndarray, title=None, cmap=None, norm=None, aspect=None,
       interpolation=None, alpha=None):
-    self.imshow(x=x, ax=self.axes, title=title, cmap=cmap, norm=norm,
+    self.imshow(x=x, ax=self.axes, title=title, norm=norm,
                 aspect=aspect, interpolation=interpolation, alpha=alpha,
                 vmin=self._color_limits[0], vmax=self._color_limits[1],
                 color_bar=self._color_bar, k_space=self._k_space,
-                log=self._k_space_log,
+                log=self._k_space_log, cmap=self._cmap,
                 rect=self.get_from_pocket(self.Keys.selected_rect))
 
   @staticmethod
@@ -423,10 +424,64 @@ class Board(Nomear):
   def slc(self, n: int): self.layer_cursor = n - 1
   def soc(self, n: int): self.object_cursor = n - 1
 
+  def hide(self, who: str = None):
+    assert who in (None, 'l', 'o')
+    layer_key = '_HIDDEN_PLOTTER_'
+    obj_key = '_HIDDEN_OBJECTS_'
+    obj_title_key = '_HIDDEN_OBJECTS_TITLES_'
+
+    # Try to restore all
+    if who is None:
+      need_to_refresh = False
+      if self.in_pocket(layer_key):
+        self.layer_plotters: list = self.get_from_pocket(
+          layer_key, put_back=False)
+        need_to_refresh = True
+      if self.in_pocket(obj_key):
+        self.objects: list = self.get_from_pocket(obj_key, put_back=False)
+        self.object_titles: list = self.get_from_pocket(
+          obj_title_key, put_back=False)
+        need_to_refresh = True
+      if need_to_refresh: self._draw()
+      return
+
+    # Try to hide current object
+    if who == 'o':
+      title_is_activated = len(self.object_titles) > 0
+      if len(self.objects) < 2: return
+      if not self.in_pocket(obj_key):
+        self.put_into_pocket(obj_key, self.objects.copy())
+        if title_is_activated:
+          self.put_into_pocket(obj_title_key, self.object_titles.copy())
+      # Remove current object
+      self.objects.pop(self.object_cursor)
+      if title_is_activated:
+        self.object_titles.pop(self.object_cursor)
+      # Set cursor
+      if self._object_cursor != 0: self._object_cursor -= 1
+
+    else:
+      # Try to hide current plotter
+      if len(self.layer_plotters) < 2: return
+      if not self.in_pocket(layer_key):
+        self.put_into_pocket(layer_key, self.layer_plotters.copy())
+      # Remove current plotter
+      self.layer_plotters.pop(self.layer_cursor)
+      # Set cursor
+      if self._layer_cursor != 0: self._layer_cursor -= 1
+
+    # Refresh
+    self._draw()
+
   def set_clim(self, vmin: float = None, vmax: float = None):
     self._color_limits = [vmin, vmax]
     self._draw()
   clim = set_clim
+
+  def set_cmap(self, cmap: str = None):
+    self._cmap = cmap
+    self._draw()
+  cmap = set_cmap
 
   def toggle_freeze_zoom_in(self):
     """Works only for 2-D plot"""

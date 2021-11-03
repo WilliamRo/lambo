@@ -32,6 +32,12 @@ class Mind(Nomear):
     params_values = list(params_dict.values())
     has_annotation = lambda p: p.annotation is not inspect._empty
     try:
+      # Handle inquiry
+      if len(args) > 0 and args[0] == '?':
+        console.show_info(f'Signature: {func_key}('
+                          f'{", ".join([str(v) for v in params_values])})')
+        return
+
       # Try to convert args type
       for i in range(len(args)):
         p = params_values[i]

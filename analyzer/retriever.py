@@ -91,7 +91,8 @@ class Retriever(DaVinci):
 
   def show_dual_conv(self, Ls=(19,), omega=45, rs=(0.5, 1.0),
                      show_real_imag=False, rotundity=True, crop=None,
-                     show_sum=False, show_extracted=False, combinations=()):
+                     show_sum=False, show_extracted=False, combinations=(),
+                     max_angle=360, include_origin=False):
     """Syntax of combination: (((a_1, ..., a_p), (r_1, ..., r_q)), ..., ())
     a can be -1, indicating all angles of a
     """
@@ -112,13 +113,14 @@ class Retriever(DaVinci):
         # Pre-calculate local match results for current selected obj
         # and L = l
         base_dict = x.get_fourier_dual_basis(
-          l, omega, rs, True, rotundity=rotundity)
+          l, omega, rs, True, rotundity=rotundity,
+          include_origin=include_origin, max_angle=max_angle)
 
         # Add combination to list if required
         for comb in combinations:
           assert isinstance(comb, (tuple, list)) and len(comb) == 2
           _as, _rs = comb
-          if _as == -1: _as = [a for a in range(0, 180, omega)]
+          if _as == -1: _as = [a for a in range(0, max_angle, omega)]
           base_dict[comb] = np.sum(
             [base_dict[(a, r)] for a in _as for r in _rs], axis=0)
 
@@ -131,7 +133,7 @@ class Retriever(DaVinci):
           self.show_status(
             f'[{i+1}/{total}] Convolving obj {self.object_cursor + 1} with ' 
             f'{"round" if rotundity else "square"} kernel of size {l}, '
-            f'(a={_a}, r={_r}) ...')
+            f'(a={_a}, r={_r:.2f}) ...')
           gather(im, b, l, _a, _r)
 
       return {'abs': np.abs, 'r': np.real, 'i': np.imag, 'sum': sum}[fmt](
@@ -153,7 +155,7 @@ class Retriever(DaVinci):
     for l in Ls:
       _add = lambda _r, _a, _l=l, fmt='abs': self._add_plot(
         extractor=lambda x: extract(x, _l, _a, _r, fmt),
-        title='L = {}, a = {}, r = {} ({}, {})'.format(
+        title='L = {}, a = {}, r = {:.2f} ({}, {})'.format(
           _l, _a, _r, {'abs': 'abs', 'r': 'real part', 'i': 'image part',
                        'sum': 'sum'}[fmt],
           'round' if rotundity else 'square'))
@@ -165,8 +167,8 @@ class Retriever(DaVinci):
           _add(r, a, fmt='r')
           _add(r, a, fmt='i')
 
-      _add_group(0, 0)
-      for r, a in descartes(rs, range(0, 180, omega)): _add_group(r, a)
+      if include_origin: _add_group(0, 0)
+      for r, a in descartes(rs, range(0, max_angle, omega)): _add_group(r, a)
       for comb in combinations: _add_group(comb[1], comb[0])
 
     # Add
@@ -371,8 +373,10 @@ if __name__ == '__main__':
   r = Retriever.initialize(path, 80)
   # r.save(overwrite=True)
   r.plot_interferogram()
+  r.plot_extracted_phase(True)
+  # r.plot
   # r.plot_bg_unwrapped()
-  # r.plot_bg_unwrapped(True)
+  r.plot_bg_unwrapped(True)
   r.plot_ground_truth()
   r.show()
 
