@@ -1,5 +1,7 @@
 from typing import Callable, List, Optional
 
+import matplotlib.pyplot as plt
+
 from lambo import descartes
 
 from lambo.data_obj.interferogram import Interferogram
@@ -44,6 +46,22 @@ class Retriever(DaVinci):
     self._add_plot(lambda x: x.img, 'Interferogram', plot_3d)
   pi = plot_interferogram
 
+  def plot_background(self, plot_3d=False):
+    self._add_plot(lambda x: x.default_background.img, 'Background', plot_3d)
+
+  def plot_k_space(self):
+    def _plot(x:Interferogram, ax: plt.Axes):
+      self.imshow(np.log((x.Sc + 1)), ax, title='Centered Spectrum (log)')
+      plt.gca().add_artist(
+        plt.Circle(list(reversed(x.peak_index)), x.radius, color='r',
+                   fill=False))
+    self.add_plotter(_plot)
+
+  def plot_extracted_unwrapped(self, plot_3d=False):
+    def f(x: Interferogram):
+      return x.extracted_angle_unwrapped
+    self._add_plot(f, 'Extracted Phase (Unwrapped)', plot_3d)
+
   def plot_bg_unwrapped(self, plot_3d=False):
     def f(x: Interferogram):
       return x.default_background.extracted_angle_unwrapped
@@ -60,7 +78,7 @@ class Retriever(DaVinci):
     self._add_plot(lambda x: x.extracted_angle, 'Extracted Phase', plot_3d)
 
   def plot_ground_truth(self, plot_3d=False):
-    self._add_plot(lambda x: x.flattened_phase, 'Ground Truth', plot_3d)
+    self._add_plot(lambda x: x.flattened_phase, 'Reconstructed', plot_3d)
   pg = plot_ground_truth
 
   # endregion: Plot Methods
@@ -370,13 +388,18 @@ if __name__ == '__main__':
   # trial_name = '80-spacer-0526'
   path = os.path.join(trial_root, trial_name)
 
-  r = Retriever.initialize(path, 80)
+  r = Retriever.initialize(path, 80, save=False)
   # r.save(overwrite=True)
   r.plot_interferogram()
-  r.plot_extracted_phase(True)
-  # r.plot
-  # r.plot_bg_unwrapped()
-  r.plot_bg_unwrapped(True)
+  r.plot_background()
+
+  r.plot_k_space()
+
+  r.plot_extracted_phase(False)
+  r.plot_extracted_unwrapped(False)
+  r.plot_bg_unwrapped(False)
+
   r.plot_ground_truth()
+  r.plot_ground_truth(True)
   r.show()
 

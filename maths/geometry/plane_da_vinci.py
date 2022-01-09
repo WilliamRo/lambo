@@ -155,7 +155,7 @@ class PlaneDaVinci(DaVinci):
 
 if __name__ == '__main__':
   print('>> Importing tframe utilities ...')
-  from pr.pr_agent import PRAgent
+  from spr.pr_agent import PRAgent
 
   data_dir = r'E:\lambai\01-PR\data'
 

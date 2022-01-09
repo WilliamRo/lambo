@@ -41,6 +41,7 @@ class Interferogram(DigitalImage):
     if bg_array is not None: self.set_background(bg_array)
 
     # Other field (should be cloned)
+    self.booster = None
     self.sample_token = None
     self.setup_token = None
     self.tag = ''
@@ -55,6 +56,7 @@ class Interferogram(DigitalImage):
                        bg_array=bg_array)
 
     # Clone other fields
+    ig.booster = self.booster
     ig.sample_token = self.sample_token
     ig.setup_token = self.setup_token
     ig.tag = self.tag
@@ -109,97 +111,84 @@ class Interferogram(DigitalImage):
     assert isinstance(val, tuple) and len(val) == 2
     self._peak_index = roma.check_type(val, inner_type=int)
 
-  @property
+  @DigitalImage.property()
   def mask(self) -> np.ndarray:
     # TODO: consider apodized band-pass filter
-    def _get_mask():
-      H, W = self.Sc.shape
-      ci, cj = self.peak_index
-      X, Y = np.ogrid[:H, :W]
-      return np.sqrt((X - ci)**2 + (Y - cj)**2) <= self.radius
-    return self.get_from_pocket('mask_of_+1_point', initializer=_get_mask)
+    H, W = self.Sc.shape
+    ci, cj = self.peak_index
+    X, Y = np.ogrid[:H, :W]
+    return np.sqrt((X - ci)**2 + (Y - cj)**2) <= self.radius
 
-  @property
+  @DigitalImage.property()
   def homing_signal(self) -> np.ndarray:
-    def _homing_signal():
-      masked = self.Fc * self.mask
-      CI, CJ = [s // 2 for s in self.Fc.shape]
-      pi, pj = self.peak_index
-      return np.roll(masked, shift=(CI - pi, CJ - pj), axis=(0, 1))
-    return self.get_from_pocket('homing_masked_Fc', initializer=_homing_signal)
+    masked = self.Fc * self.mask
+    CI, CJ = [s // 2 for s in self.Fc.shape]
+    pi, pj = self.peak_index
+    return np.roll(masked, shift=(CI - pi, CJ - pj), axis=(0, 1))
 
-  @property
+  @DigitalImage.property()
+  def cropped_spectrum(self):
+    R = self.radius
+    CI, CJ = [s // 2 for s in self.Fc.shape]
+    return self.homing_signal[CI-R:CI+R, CJ-R:CJ+R]
+
+  @DigitalImage.property()
   def extracted_image(self) -> np.ndarray:
-    return self.get_from_pocket(
-      'extracted_image',
-      initializer=lambda: np.fft.ifft2(np.fft.ifftshift(self.homing_signal)))
+    x = self.homing_signal
+    if self.booster is True: x = self.cropped_spectrum
+    return np.fft.ifft2(np.fft.ifftshift(x))
 
-  @property
+  @DigitalImage.property()
   def extracted_angle(self) -> np.ndarray:
-    return self.get_from_pocket(
-      'extracted_angle', initializer=lambda: np.angle(self.extracted_image))
+    return np.angle(self.extracted_image)
 
-  @property
+  @DigitalImage.property()
   def extracted_angle_unwrapped(self) -> np.ndarray:
-    return self.get_from_pocket(
-      'extracted_angle_unwrapped',
-      initializer=lambda: unwrap_phase(self.extracted_angle))
+    return unwrap_phase(self.extracted_angle)
 
-  @property
+  @DigitalImage.property()
   def corrected_image(self) -> np.ndarray:
     assert all([isinstance(self._backgrounds[0], Interferogram),
                 self.size == self._backgrounds[0].size])
-    return self.get_from_pocket('corrected_image', initializer=lambda: (
-        self.extracted_image / self._backgrounds[0].extracted_image))
+    return self.extracted_image / self._backgrounds[0].extracted_image
 
-  @property
+  @DigitalImage.property()
   def corrected_intensity(self) -> np.ndarray:
     assert all([isinstance(self._backgrounds[0], Interferogram),
                 self.size == self._backgrounds[0].size])
-    return self.get_from_pocket(
-      'corrected_intensity',
-      initializer=lambda: np.log(np.abs(self.corrected_image)))
+    return np.log(np.abs(self.corrected_image))
 
-  @property
+  @DigitalImage.property()
   def corrected_phase(self) -> np.ndarray:
     """Phase information after subtracting background"""
     assert all([isinstance(self._backgrounds[0], Interferogram),
                 self.size == self._backgrounds[0].size])
-    return self.get_from_pocket(
-      'retrieved_phase', initializer=lambda: np.angle(self.corrected_image))
+    return np.angle(self.corrected_image)
 
-  @property
+  @DigitalImage.property()
   def derivative_1(self) -> np.ndarray:
-    def _calculate_grad1():
-      x = ndimage.sobel(self.extracted_angle_unwrapped, axis=0, mode='constant')
-      y = ndimage.sobel(self.extracted_angle_unwrapped, axis=1, mode='constant')
-      return np.stack([x, y], axis=-1)
-    return self.get_from_pocket('derivative_1', initializer=_calculate_grad1)
+    x = ndimage.sobel(self.extracted_angle_unwrapped, axis=0, mode='constant')
+    y = ndimage.sobel(self.extracted_angle_unwrapped, axis=1, mode='constant')
+    return np.stack([x, y], axis=-1)
 
-  @property
+  @DigitalImage.property()
   def derivative_1_amp(self) -> np.ndarray:
-    def _calculate_grad1_amp():
-      return np.sqrt(np.sum(self.derivative_1 * self.derivative_1, axis=-1))
-    return self.get_from_pocket(
-      'derivative_1_amp', initializer=_calculate_grad1_amp)
+    return np.sqrt(np.sum(self.derivative_1 * self.derivative_1, axis=-1))
 
-  @property
+  @DigitalImage.property()
   def aberration(self) -> np.ndarray:
-    return self.get_from_pocket('aberration', initializer=lambda: (
-        self.extracted_angle_unwrapped - self.flattened_phase))
+    return self.extracted_angle_unwrapped - self.flattened_phase
 
-  @property
+  @DigitalImage.property()
   def unwrapped_phase(self) -> np.ndarray:
     """Result after performing phase unwrapping"""
-    return self.get_from_pocket(
-      'unwrapped_phase', initializer=lambda: unwrap_phase(self.corrected_phase))
+    return unwrap_phase(self.corrected_phase)
 
-  @property
+  @DigitalImage.property()
   def bg_plane_info(self) -> np.ndarray:
     """(bg, p, r)"""
-    _fit_plane = lambda: fit_plane_adaptively(
+    return fit_plane_adaptively(
       self.unwrapped_phase.copy(), **self.flatten_configs)
-    return self.get_from_pocket('bg_plane_info', initializer=_fit_plane)
 
   @property
   def bg_plane(self) -> np.ndarray:
@@ -218,23 +207,19 @@ class Interferogram(DigitalImage):
   def flatten_configs(self) -> dict:
     return self.get_from_pocket('flatten_configs', default={})
 
-  @property
+  @DigitalImage.property()
   def flattened_phase(self) -> np.ndarray:
-    def _flattened_phase():
-      phase = self.unwrapped_phase.copy()
-      bg_plane = self.bg_plane_info[0]
-      flattened = phase - bg_plane
-      flattened = np.maximum(flattened, 0)
-      return flattened
-    return self.get_from_pocket('flattened_phase', initializer=_flattened_phase)
+    phase = self.unwrapped_phase.copy()
+    bg_plane = self.bg_plane_info[0]
+    flattened = phase - bg_plane
+    flattened = np.maximum(flattened, 0)
+    return flattened
 
-  @property
+  @DigitalImage.property()
   def sample_height(self):
-    def _height():
-      lambda_0 = roma.check_type(self.lambda_0, float)
-      delta_n = roma.check_type(self.delta_n, float)
-      return self.flattened_phase * lambda_0 / (2 * np.pi * delta_n)
-    return self.get_from_pocket('sample_height', initializer=lambda: _height)
+    lambda_0 = roma.check_type(self.lambda_0, float)
+    delta_n = roma.check_type(self.delta_n, float)
+    return self.flattened_phase * lambda_0 / (2 * np.pi * delta_n)
 
   # endregion: Properties
 
@@ -681,7 +666,7 @@ if __name__ == '__main__':
   # ig = Interferogram.imread(r'E:\lambai\01-PR\data\63-Nie system\1.tif',
   #                           radius=70)
 
-  # ig.dashow(show_calibration=False, show_grad1=True)
+  ig.dashow(show_calibration=True)
   # ig.analyze_time()
   # ig.analyze_windows(4)
   # ig.show_fourier_basis(21, rs=(1.0,), angles=(5, 10))

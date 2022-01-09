@@ -7,6 +7,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from typing import Tuple, Optional
 
 import inspect
+import threading
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -64,6 +65,10 @@ class Board(Nomear):
   # region: Properties
 
   @property
+  def displayed_image_size(self):
+    return [abs(se[1] - se[0]) for se in self.axes.images[0].sticky_edges[:2]]
+
+  @property
   def object_cursor(self):
     return self._object_cursor
 
@@ -109,10 +114,10 @@ class Board(Nomear):
   def window(self):
     return self.canvas.manager.window
 
-  @property
+  @Nomear.property(key=Keys.axes)
   def axes(self) -> plt.Axes:
-    init_axes = lambda: self.figure.add_subplot(111)
-    return self.get_from_pocket(self.Keys.axes, initializer=init_axes)
+    ax = self.figure.add_subplot(111)
+    return ax
 
   @property
   def axes3d(self) -> Axes3D:
@@ -148,7 +153,7 @@ class Board(Nomear):
 
   # region: Private Methods
 
-  def _draw(self):
+  def _draw(self, in_thread=False):
     """Draw stuff.
     Case 1:
     Case 2:
@@ -177,7 +182,7 @@ class Board(Nomear):
     plt.tight_layout()
 
     # Refresh
-    self._internal_refresh()
+    self._internal_refresh(in_thread)
 
   def _clear(self):
     # Clear 2D axes
@@ -193,8 +198,9 @@ class Board(Nomear):
     # Clear figure
     self.figure.clear()
 
-  def _internal_refresh(self):
-    self.canvas.draw()
+  def _internal_refresh(self, in_thread=False):
+    if in_thread: self.canvas.draw_idle()
+    else: self.canvas.draw()
 
   def _get_kwargs_for_plotter(self, plotter):
     assert callable(plotter)
@@ -270,7 +276,7 @@ class Board(Nomear):
 
   # endregion: Bookmark Logic
 
-  def refresh(self): self._draw()
+  def refresh(self, in_thread=False): self._draw(in_thread)
 
   def move_to(self, x:int, y:int):
     """Move figure's upper left corner to pixel (x, y)
@@ -340,14 +346,13 @@ class Board(Nomear):
                 aspect=aspect, interpolation=interpolation, alpha=alpha,
                 vmin=self._color_limits[0], vmax=self._color_limits[1],
                 color_bar=self._color_bar, k_space=self._k_space,
-                log=self._k_space_log, cmap=self._cmap,
-                rect=self.get_from_pocket(self.Keys.selected_rect))
+                log=self._k_space_log, cmap=self._cmap)
+    self._zoom_in(ax=self.axes)
 
   @staticmethod
   def imshow(x: np.ndarray, ax: plt.Axes = None, title=None, cmap=None,
              norm=None, aspect=None, interpolation=None, alpha=None,
-             vmin=None, vmax=None, color_bar=False, k_space=False, log=False,
-             rect=None):
+             vmin=None, vmax=None, color_bar=False, k_space=False, log=False):
     # Get current axes if ax is not provided
     if ax is None: ax = plt.gca()
     # Clear axes before drawing
@@ -374,12 +379,32 @@ class Board(Nomear):
     if title: ax.set_title(title)
     ax.set_axis_off()
 
-    # Zoom-in to rect if provided
-    if rect is not None:
-      Y, X = x.shape
-      xlim, ylim = rect
-      ax.set_xlim(*[l * X for l in xlim])
-      ax.set_ylim(*[l * Y for l in ylim])
+  def _zoom_in(self, ax: plt.Axes = None):
+    rect = self.get_from_pocket(self.Keys.selected_rect, None)
+    if rect is None: return
+
+    if ax is None: ax = plt.gca()
+    # Get full size
+    W, H = self.displayed_image_size
+    xlim, ylim = rect
+    ax.set_xlim(*[l * W for l in xlim])
+    ax.set_ylim(*[l * H for l in ylim])
+
+  def _move_rect(self, di, dj, m=1):
+    # Try to get rect info from pocket
+    rect = self.get_from_pocket(self.Keys.selected_rect)
+    if rect is None: return
+
+    assert di in (-1, 0, 1) and dj in (-1, 0, 1)
+    di, dj = di * m, dj * m
+
+    # Get full size
+    W, H = self.displayed_image_size
+    xlim, ylim = self.axes.get_xlim(), self.axes.get_ylim()
+    lims = (((xlim[0] + di) / W, (xlim[1] + di) / W),
+            ((ylim[0] + dj) / H, (ylim[1] + dj) / H))
+    self.replace_stuff(self.Keys.selected_rect, lims)
+    self.refresh()
 
   @staticmethod
   def scatter(X, Y, Z, ax3d: Axes3D, **kwargs):
@@ -496,6 +521,7 @@ class Board(Nomear):
     if rect == lims:
       self.replace_stuff(self.Keys.selected_rect, None)
       console.show_status('Freeze-zoom-in function has been turned off.')
+      self.refresh()
     else:
       self.put_into_pocket(self.Keys.selected_rect, lims, False)
       console.show_status(

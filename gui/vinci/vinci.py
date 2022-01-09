@@ -7,7 +7,7 @@ class DaVinci(Board, Mind):
 
   def __init__(self, title=None, height=5, width=5, init_as_image_viewer=False):
     # Call parent's constructor
-    super(DaVinci, self).__init__(title, height, width)
+    super(DaVinci, self).__init__(title, width, height)
 
     # Attributes
     self.state_machine = StateMachine()
@@ -66,6 +66,12 @@ class DaVinci(Board, Mind):
         'ctrl+{}'.format(n), lambda n=n: self.set_bookmark(n))
       self.state_machine.register_key_event(
         str(n), lambda n=n: self.jump_back_and_forth(n))
+
+  def _register_events_for_moving_rect(self, pixels=5):
+    for (di, dj), key in zip([(1, 0), (-1, 0), (0, 1), (0, -1)],
+                             ('L', 'H', 'J', 'K')):
+      self.state_machine.register_key_event(
+        f'{key}', lambda di=di, dj=dj: self._move_rect(di, dj, pixels))
 
   def _activate_mind(self):
     if self.backend_is_TkAgg:
