@@ -1,3 +1,4 @@
+import os, time
 from threading import Thread
 from typing import Optional
 
@@ -6,9 +7,10 @@ import numpy as np
 from roma import Nomear
 from roma import check_type, console
 
+from lambo.zebra.base_classes.timer import Timer
 
 
-class Inflow(Nomear):
+class Inflow(Timer):
   """Base class"""
 
   def __init__(self, max_len=20):
@@ -49,17 +51,21 @@ class Inflow(Nomear):
   def fetch(self):
     self._init()
     while True:
-      if self.terminate_flag: return
+      if self.terminate_flag: break
       if (isinstance(self.master_thread, Thread)
-          and not self.master_thread.is_alive()): return
+          and not self.master_thread.is_alive()): break
       self._loop()
+      self._tic()
+    self._finalize()
 
 
-  def _init(self): raise NotImplemented
+  def _init(self): pass
 
 
   def _loop(self): raise NotImplemented
 
+
+  def _finalize(self): pass
 
 
 

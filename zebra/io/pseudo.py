@@ -18,7 +18,7 @@ class PseudoFetcher(Inflow):
 
     self.path = path
     self.seq_id = seq_id
-    self.fps = fps
+    self.fetch_fps = fps
 
     self.interferograms = None
     self.index = 0
@@ -36,7 +36,7 @@ class PseudoFetcher(Inflow):
 
     self._preprocess()
 
-    assert self.fps > 0
+    assert self.fetch_fps > 0
     self.index = 0
     console.show_status('Looping ...')
 
@@ -57,7 +57,8 @@ class PseudoFetcher(Inflow):
   def _loop(self):
     index = self.index % len(self.interferograms)
     self.append_to_buffer(self.interferograms[index])
-    time.sleep(1 / self.fps)
+
+    time.sleep(1 / self.fetch_fps * 0.9)
     self.index += 1
 
 

@@ -1,4 +1,5 @@
 import os, threading
+import numpy as np
 
 import matplotlib.pyplot as plt
 
@@ -6,6 +7,7 @@ from threading import Thread
 from lambo.data_obj.interferogram import Interferogram
 from lambo.gui.vinci.vinci import DaVinci
 from lambo.zebra.io.inflow import Inflow
+from lambo.zebra.io.exporter import Exporter
 from lambo.zebra.decoder.decoder import Decoder
 from lambo.zebra.gui.player import Player
 from roma import console
@@ -27,6 +29,8 @@ class Zinci(DaVinci):
     self.player: Optional[Player] = None
     self.main_thread = threading.current_thread()
 
+    self.exporter = Exporter()
+
     self._register_keys()
 
   # region: Plotters
@@ -37,6 +41,20 @@ class Zinci(DaVinci):
       if isinstance(self.fetcher, Inflow): text = 'Press [Space] to run'
     DaVinci.show_text(ax, text)
 
+  def imshow_pro(
+      self, x: np.ndarray, title=None, cmap=None, norm=None, aspect=None,
+      interpolation=None, alpha=None):
+
+    # # Save image if required
+    if self.exporter.save_flag: self.exporter.save_image(x)
+
+    self.imshow(x=x, ax=self.axes, title=title, norm=norm,
+                aspect=aspect, interpolation=interpolation, alpha=alpha,
+                vmin=self._color_limits[0], vmax=self._color_limits[1],
+                color_bar=self._color_bar, k_space=self._k_space,
+                log=self._k_space_log, cmap=self._cmap)
+    self._zoom_in(ax=self.axes)
+
   # endregion: Plotters
 
   # region: Commands
@@ -44,6 +62,9 @@ class Zinci(DaVinci):
   def _register_keys(self):
     self.state_machine.register_key_event(' ', self._play_or_pause)
     self.state_machine.register_key_event('enter', self._analyze_one)
+    self.state_machine.register_key_event('p', self.exporter.set_path)
+
+    self.state_machine.register_key_event('s', self.exporter.set_save_flag)
 
   # endregion: Commands
 
