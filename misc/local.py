@@ -203,6 +203,7 @@ def walk(root_path, type_filter=None, pattern=None, return_basename=False):
   # Sanity check
   assert os.path.exists(root_path)
   paths = [os.path.join(root_path, p) for p in os.listdir(root_path)]
+  paths = sorted(paths)
   # Filter path
   if type_filter in ('file',): type_filter = os.path.isfile
   elif type_filter in ('folder', 'dir'): type_filter = os.path.isdir
