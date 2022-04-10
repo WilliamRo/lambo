@@ -385,9 +385,9 @@ class Retriever(DaVinci):
 if __name__ == '__main__':
   trial_root = r'E:\lambai\01-PR\data'
   trial_name = '01-3t3'
-  # trial_name = '04-rbc'
-  trial_name = '05-bead'
-  # trial_name = '03-hek'
+  trial_name = '04-rbc'
+  # trial_name = '05-bead'
+  trial_name = '03-hek'
   # trial_name = '80-spacer-0526'
   path = os.path.join(trial_root, trial_name)
 
